@@ -16,6 +16,17 @@ from .ray_encoder import RayEncoder
 from .spatial_map import EgomotionEstimator, EgocentricSpatialMap
 
 
+@dataclass(frozen=True)
+class AblationFlags:
+    """Optional inference-time module knockout flags for Phase 7 ablations."""
+
+    ablate_map: bool = False
+    ablate_landmarks: bool = False
+    ablate_entity_attn: bool = False
+    ablate_mode_head: bool = False
+    ablate_depth: bool = False
+
+
 @dataclass
 class EMLRPStepOutput:
     """Outputs produced by a single step of EMLRPPolicy."""
@@ -152,6 +163,7 @@ class EMLRPPolicy(nn.Module):
         prev_action: Tensor,
         done: Tensor | None = None,
         compute_aux: bool = False,
+        ablations: AblationFlags | None = None,
     ) -> EMLRPStepOutput:
         """Run one decision step.
 
@@ -181,11 +193,17 @@ class EMLRPPolicy(nn.Module):
             depth_feat = torch.zeros(
                 B, self.config.depth_feat_dim, device=ray_dist.device, dtype=ray_dist.dtype
             )
+        if ablations is not None and ablations.ablate_depth and depth_feat is not None:
+            depth_feat = torch.zeros_like(depth_feat)
 
         # 1. Encode current sensory streams
         ray_embed, ray_sector_feats = self.ray_encoder(ray_dist, ray_hit)
         entity_summary, entity_tokens, entity_importance = self.entity_encoder(
-            ent_feat, ent_type, ent_mask, ray_embed
+            ent_feat,
+            ent_type,
+            ent_mask,
+            ray_embed,
+            ablate_attention=bool(ablations is not None and ablations.ablate_entity_attn),
         )
         vitals_embed = self.vitals_encoder(vitals)
         prev_act_embed = self.prev_action_encoder(prev_action.float())
@@ -214,6 +232,11 @@ class EMLRPPolicy(nn.Module):
             prev_gru_h,
             vitals,
         )
+        if ablations is not None:
+            if ablations.ablate_map:
+                map_readout = torch.zeros_like(map_readout)
+            if ablations.ablate_landmarks:
+                landmark_readout = torch.zeros_like(landmark_readout)
 
         # 3. Fuse modalities and update GRU core
         parts = [
@@ -233,6 +256,8 @@ class EMLRPPolicy(nn.Module):
         # 4. Latent mode conditioning and policy/value heads
         mode_logits = self.mode_head(next_gru_h)
         mode_probs = F.softmax(mode_logits, dim=-1)
+        if ablations is not None and ablations.ablate_mode_head:
+            mode_probs = torch.full_like(mode_probs, 1.0 / mode_probs.shape[-1])
         mode_embed = torch.matmul(mode_probs, self.mode_embeddings)  # (B, mode_embed_dim)
 
         policy_in = torch.cat([next_gru_h, mode_embed], dim=-1)
