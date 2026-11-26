@@ -5,12 +5,12 @@ train:
   device: auto
   seed: 42
   total_steps: 1000000
-  eval_interval_updates: 25
+  eval_interval_updates: 50
   save_interval_updates: 25
   eval_maps_per_tier: 3
 
 env:
-  num_envs: 20
+  num_envs: 24
   use_subproc: true
   initial_stage: 5
   episode_ticks: 2100
@@ -26,7 +26,7 @@ env:
 ppo:
   rollout_len: 128
   seq_len: 32
-  minibatch_seqs: 40
+  minibatch_seqs: 48
   use_bf16: true
   use_action_mask: true
   critic_warmup_updates: 20

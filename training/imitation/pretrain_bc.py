@@ -86,6 +86,9 @@ def pretrain_bc(
     device = torch.device(
         ("cuda" if torch.cuda.is_available() else "cpu") if device_str == "auto" else device_str
     )
+    use_bf16 = device.type == "cuda"
+    if use_bf16:
+        torch.set_float32_matmul_precision("high")
     rng = np.random.default_rng(seed)
     torch.manual_seed(seed)
 
@@ -214,9 +217,10 @@ def pretrain_bc(
             done_t = torch.as_tensor(b_done, device=device)
             ret_t = torch.as_tensor(b_ret, device=device)
 
-            outputs, next_state = policy.forward_sequence(
-                obs_seq, state, prev_act_t, done_seq=reset_t, compute_aux=True
-            )
+            with torch.amp.autocast("cuda", dtype=torch.bfloat16, enabled=use_bf16):
+                outputs, next_state = policy.forward_sequence(
+                    obs_seq, state, prev_act_t, done_seq=reset_t, compute_aux=True
+                )
             state = EMLRPState(
                 gru_h=next_state.gru_h.detach(),
                 spatial_map=next_state.spatial_map.detach(),
