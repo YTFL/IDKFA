@@ -158,6 +158,14 @@ class ProceduralMapGenerator:
             m.add_thing(64.0 + room_size / 2 + 32, 64.0 + room_size / 2, THING_CLIP)
             m.add_thing(128.0, 64.0 + room_size - 96.0, THING_MEDIKIT)
 
+        m.metadata = {
+            "family": MapFamily.FAMILY_A.value,
+            "start_xy": (128.0, 128.0),
+            "exit_xy": None,
+            "key_xy": None,
+            "key_color": None,
+            "num_enemies": enemy_count,
+        }
         return m, True
 
     # -------------------------------------------------------------------------
@@ -170,10 +178,34 @@ class ProceduralMapGenerator:
         num_rooms: int,
         add_loops: bool = True,
     ) -> tuple[dict[int, Room], list[tuple[int, int]], list[tuple[int, int]]]:
-        """Creates a connected graph of rooms on a 2D grid."""
-        all_coords = [(x, y) for x in range(grid_w) for y in range(grid_h)]
-        self.rng.shuffle(all_coords)
-        selected_coords = all_coords[:num_rooms]
+        """Creates a guaranteed-connected graph of rooms on a 2D grid via frontier growth."""
+        while grid_w * grid_h < num_rooms:
+            grid_w += 1
+            grid_h += 1
+
+        start_coord = (self.rng.randrange(grid_w), self.rng.randrange(grid_h))
+        selected_coords: list[tuple[int, int]] = [start_coord]
+        selected_set = {start_coord}
+        frontier: list[tuple[int, int]] = []
+        frontier_set: set[tuple[int, int]] = set()
+
+        def _push_neighbors(cx: int, cy: int) -> None:
+            for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                nx, ny = cx + dx, cy + dy
+                if 0 <= nx < grid_w and 0 <= ny < grid_h:
+                    nc = (nx, ny)
+                    if nc not in selected_set and nc not in frontier_set:
+                        frontier.append(nc)
+                        frontier_set.add(nc)
+
+        _push_neighbors(*start_coord)
+        while len(selected_coords) < num_rooms and frontier:
+            pick = self.rng.randrange(len(frontier))
+            coord = frontier.pop(pick)
+            frontier_set.remove(coord)
+            selected_coords.append(coord)
+            selected_set.add(coord)
+            _push_neighbors(*coord)
 
         rooms: dict[int, Room] = {}
         coord_to_id: dict[tuple[int, int], int] = {}
@@ -182,7 +214,6 @@ class ProceduralMapGenerator:
             coord_to_id[(gx, gy)] = idx
 
         # Find potential adjacent neighbors
-        adj: collections.defaultdict[int, list[int]] = collections.defaultdict(list)
         edges: list[tuple[int, int]] = []
         for r_id, r in rooms.items():
             for dx, dy in [(1, 0), (-1, 0), (0, 1), (0, -1)]:
@@ -192,12 +223,11 @@ class ProceduralMapGenerator:
                     if nbr_id > r_id:
                         edges.append((r_id, nbr_id))
 
-        if not edges and num_rooms > 1:
-            # Force connect rooms by placing them in a chain if grid was too sparse
-            return self._create_chain_dungeon(num_rooms)
+        if not edges and len(rooms) > 1:
+            return self._create_chain_dungeon(len(rooms))
 
         # Build spanning tree with random weights
-        parent = list(range(num_rooms))
+        parent = list(range(len(rooms)))
 
         def find(i: int) -> int:
             if parent[i] == i:
@@ -389,25 +419,42 @@ class ProceduralMapGenerator:
         start_id = 0
         rooms[start_id].is_start = True
 
-        # BFS from start
-        adj = collections.defaultdict(list)
-        for u, v in edges:
-            adj[u].append(v)
-            adj[v].append(u)
+        # BFS on spanning tree so exit_id is guaranteed to be a tree leaf (degree 1)
+        tree_adj = collections.defaultdict(list)
+        for u, v in tree_edges:
+            tree_adj[u].append(v)
+            tree_adj[v].append(u)
 
         dist = {start_id: 0}
-        pred = {start_id: None}
         q = collections.deque([start_id])
         while q:
             curr = q.popleft()
-            for nbr in adj[curr]:
+            for nbr in tree_adj[curr]:
                 if nbr not in dist:
                     dist[nbr] = dist[curr] + 1
-                    pred[nbr] = curr
                     q.append(nbr)
 
         exit_id = max(dist.items(), key=lambda kv: kv[1])[0]
         rooms[exit_id].is_exit = True
+
+        # Keep loops elsewhere, but ensure exit_id has degree 1 (via its tree edge)
+        # so the single locked door strictly gates the exit room.
+        tree_set = {(min(u, v), max(u, v)) for u, v in tree_edges}
+        edges = [
+            (u, v)
+            for u, v in edges
+            if (exit_id not in (u, v)) or ((min(u, v), max(u, v)) in tree_set)
+        ]
+
+        # Recompute exit_id's sole remaining neighbor
+        gate_neighbor = None
+        for u, v in edges:
+            if u == exit_id:
+                gate_neighbor = v
+                break
+            if v == exit_id:
+                gate_neighbor = u
+                break
 
         key_color = self.rng.choice([LOCK_RED, LOCK_BLUE, LOCK_YELLOW])
         available = [r for r in rooms.keys() if r not in (start_id, exit_id)]
@@ -415,11 +462,8 @@ class ProceduralMapGenerator:
         rooms[key_room_id].key = key_color
 
         # Place locked door into the exit room
-        exit_neighbors = adj[exit_id]
         doors: list[DoorEdge] = []
-        gate_neighbor = None
-        if exit_neighbors:
-            gate_neighbor = exit_neighbors[0]
+        if gate_neighbor is not None:
             doors.append(DoorEdge(r1=gate_neighbor, r2=exit_id, locked=key_color))
 
         # Add regular doors
@@ -512,6 +556,8 @@ class ProceduralMapGenerator:
         reachable_before_key = get_reachable(has_key=False)
         if target_key_room not in reachable_before_key:
             return False  # Cannot reach key without opening the locked door!
+        if exit_id in reachable_before_key:
+            return False  # Exit must be gated behind the locked door!
 
         # After reaching key, can player reach exit?
         reachable_after_key = get_reachable(has_key=True)
@@ -564,42 +610,86 @@ class ProceduralMapGenerator:
         for u, v in edges:
             edge_set.add((min(u, v), max(u, v)))
 
+        door_w = 96.0
+        half_w = door_w / 2.0
+
+        # Build lookup from (gx, gy) to room id for O(1) neighbor checks
+        grid_to_id = {(r.gx, r.gy): rid for rid, r in rooms.items()}
+        # Store shared portal vertices per undirected room edge so room walls and corridors share exact vertices
+        portal_verts: dict[tuple[int, int], tuple[int, int, int, int]] = {}
+
+        def _get_portal_verts(r_a: int, r_b: int) -> tuple[int, int, int, int]:
+            key = (min(r_a, r_b), max(r_a, r_b))
+            if key in portal_verts:
+                return portal_verts[key]
+            # Normalize so ra is West or South of rb
+            ra_id, rb_id = key
+            if rooms[ra_id].gx > rooms[rb_id].gx or rooms[ra_id].gy > rooms[rb_id].gy:
+                ra_id, rb_id = rb_id, ra_id
+            x1_a, y1_a, x2_a, y2_a = room_coords[ra_id]
+            x1_b, y1_b, x2_b, y2_b = room_coords[rb_id]
+            if rooms[ra_id].gx < rooms[rb_id].gx:
+                mid_y = (max(y1_a, y1_b) + min(y2_a, y2_b)) / 2.0
+                va_low = m.add_vertex(x2_a, mid_y - half_w)
+                va_high = m.add_vertex(x2_a, mid_y + half_w)
+                vb_low = m.add_vertex(x1_b, mid_y - half_w)
+                vb_high = m.add_vertex(x1_b, mid_y + half_w)
+            else:
+                mid_x = (max(x1_a, x1_b) + min(x2_a, x2_b)) / 2.0
+                va_low = m.add_vertex(mid_x - half_w, y2_a)
+                va_high = m.add_vertex(mid_x + half_w, y2_a)
+                vb_low = m.add_vertex(mid_x - half_w, y1_b)
+                vb_high = m.add_vertex(mid_x + half_w, y1_b)
+            portal_verts[key] = (va_low, va_high, vb_low, vb_high)
+            return portal_verts[key]
+
         for rid, room in rooms.items():
             rx1, ry1, rx2, ry2 = room_coords[rid]
             sec = room_sectors[rid]
             w_tex = self.rng.choice(WALL_TEXTURES)
             sd_room = m.add_sidedef(sector=sec, texturemiddle=w_tex)
 
-            # Check 4 directions for connections
-            for dx, dy, (x1, y1, x2, y2) in [
-                (1, 0, (rx2, ry1, rx2, ry2)),    # East
-                (-1, 0, (rx1, ry2, rx1, ry1)),   # West
-                (0, 1, (rx2, ry2, rx1, ry2)),    # North
-                (0, -1, (rx1, ry1, rx2, ry1)),   # South
-            ]:
-                nbr_id = None
-                for other_id, other in rooms.items():
-                    if other.gx == room.gx + dx and other.gy == room.gy + dy:
-                        nbr_id = other_id
-                        break
+            # Room corner vertices in clockwise order so sidefront faces INSIDE the room
+            v_bl = m.add_vertex(rx1, ry1)
+            v_tl = m.add_vertex(rx1, ry2)
+            v_tr = m.add_vertex(rx2, ry2)
+            v_br = m.add_vertex(rx2, ry1)
 
+            # 4 clockwise edges: West (+y), North (+x), East (-y), South (-x)
+            for dx, dy, v_start, v_end, is_low_side in [
+                (-1, 0, v_bl, v_tl, False),  # West: room is East of neighbor
+                (0, 1, v_tl, v_tr, True),    # North: room is South of neighbor
+                (1, 0, v_tr, v_br, True),    # East: room is West of neighbor
+                (0, -1, v_br, v_bl, False),  # South: room is North of neighbor
+            ]:
+                nbr_id = grid_to_id.get((room.gx + dx, room.gy + dy))
                 has_connection = nbr_id is not None and (min(rid, nbr_id), max(rid, nbr_id)) in edge_set
 
                 if not has_connection:
-                    # Solid boundary wall
-                    va = m.add_vertex(x1, y1)
-                    vb = m.add_vertex(x2, y2)
-                    m.add_linedef(va, vb, sidefront=sd_room, blocking=True)
+                    m.add_linedef(v_start, v_end, sidefront=sd_room, blocking=True)
                 else:
-                    # Connection exists: add doorway or open passage if this is smaller id
+                    va_low, va_high, vb_low, vb_high = _get_portal_verts(rid, nbr_id)
+                    p_low, p_high = (va_low, va_high) if is_low_side else (vb_low, vb_high)
+                    # Maintain clockwise room perimeter around the doorway opening
+                    if (dx, dy) in ((-1, 0), (0, 1)):
+                        # Increasing coordinate along edge: v_start -> p_low, p_high -> v_end
+                        m.add_linedef(v_start, p_low, sidefront=sd_room, blocking=True)
+                        m.add_linedef(p_high, v_end, sidefront=sd_room, blocking=True)
+                    else:
+                        # Decreasing coordinate along edge: v_start -> p_high, p_low -> v_end
+                        m.add_linedef(v_start, p_high, sidefront=sd_room, blocking=True)
+                        m.add_linedef(p_low, v_end, sidefront=sd_room, blocking=True)
+
                     if rid < nbr_id:
                         self._build_corridor_doorway(
                             m,
-                            room_coords[rid],
-                            room_coords[nbr_id],
+                            room,
+                            rooms[nbr_id],
                             room_sectors[rid],
                             room_sectors[nbr_id],
+                            _get_portal_verts(rid, nbr_id),
                             door_lookup.get((rid, nbr_id)),
+                            w_tex,
                         )
 
             # Populate Things in room
@@ -608,15 +698,24 @@ class ProceduralMapGenerator:
 
             if room.is_start:
                 m.add_thing(cx, cy, THING_PLAYER1, angle=0)
+                m.metadata["start_xy"] = (float(cx), float(cy))
 
             if room.is_exit:
-                # Add exit trigger line across the center of exit room
-                va = m.add_vertex(cx - 32, cy - 32)
-                vb = m.add_vertex(cx + 32, cy + 32)
+                # Two-sided walkover exit cross at the center of the exit room
                 sd_exit = m.add_sidedef(sector=sec, texturemiddle="-")
+                ve1 = m.add_vertex(cx - 48, cy)
+                ve2 = m.add_vertex(cx + 48, cy)
+                ve3 = m.add_vertex(cx, cy - 48)
+                ve4 = m.add_vertex(cx, cy + 48)
                 m.add_linedef(
-                    va, vb, sidefront=sd_exit, blocking=False, special=SPECIAL_EXIT_NORMAL, playercross=True
+                    ve1, ve2, sidefront=sd_exit, sideback=sd_exit, twosided=True,
+                    blocking=False, special=SPECIAL_EXIT_NORMAL, playercross=True,
                 )
+                m.add_linedef(
+                    ve3, ve4, sidefront=sd_exit, sideback=sd_exit, twosided=True,
+                    blocking=False, special=SPECIAL_EXIT_NORMAL, playercross=True,
+                )
+                m.metadata["exit_xy"] = (float(cx), float(cy))
 
             # Keycard
             if room.key:
@@ -627,7 +726,10 @@ class ProceduralMapGenerator:
                     if room.key == LOCK_BLUE
                     else THING_YELLOW_CARD
                 )
-                m.add_thing(cx + 40, cy + 40, ktype)
+                kx, ky = float(cx + 40), float(cy + 40)
+                m.add_thing(kx, ky, ktype)
+                m.metadata["key_xy"] = (kx, ky)
+                m.metadata["key_color"] = int(room.key)
 
             # Enemies
             for i, etype in enumerate(room.enemies):
@@ -644,67 +746,90 @@ class ProceduralMapGenerator:
     def _build_corridor_doorway(
         self,
         m: UDMFMap,
-        coords1: tuple[float, float, float, float],
-        coords2: tuple[float, float, float, float],
+        room1: Room,
+        room2: Room,
         sec1: int,
         sec2: int,
+        p_verts: tuple[int, int, int, int],
         locked_type: int | None,
+        wall_tex: str,
     ) -> None:
-        """Builds a connecting passage or door between two adjacent rooms."""
-        x1_a, y1_a, x2_a, y2_a = coords1
-        x1_b, y1_b, x2_b, y2_b = coords2
-
-        # Overlapping boundary
-        door_w = 96.0
-        if x2_a <= x1_b:  # Room 1 is West, Room 2 is East
-            mid_y = (max(y1_a, y1_b) + min(y2_a, y2_b)) / 2
-            v_a1 = m.add_vertex(x2_a, mid_y - door_w / 2)
-            v_a2 = m.add_vertex(x2_a, mid_y + door_w / 2)
-            v_b1 = m.add_vertex(x1_b, mid_y - door_w / 2)
-            v_b2 = m.add_vertex(x1_b, mid_y + door_w / 2)
-        elif y2_a <= y1_b:  # Room 1 is South, Room 2 is North
-            mid_x = (max(x1_a, x1_b) + min(x2_a, x2_b)) / 2
-            v_a1 = m.add_vertex(mid_x - door_w / 2, y2_a)
-            v_a2 = m.add_vertex(mid_x + door_w / 2, y2_a)
-            v_b1 = m.add_vertex(mid_x - door_w / 2, y1_b)
-            v_b2 = m.add_vertex(mid_x + door_w / 2, y1_b)
+        """Builds a watertight corridor or door sector between two adjacent rooms."""
+        # Normalize so r_low is West (smaller gx) or South (smaller gy) of r_high
+        if room1.gx > room2.gx or room1.gy > room2.gy:
+            sec_low, sec_high = sec2, sec1
+            is_east_west = room2.gx < room1.gx
         else:
-            return
+            sec_low, sec_high = sec1, sec2
+            is_east_west = room1.gx < room2.gx
+
+        va_low, va_high, vb_low, vb_high = p_verts
 
         if locked_type is None:
-            # Open corridor
-            sd_f = m.add_sidedef(sector=sec1, texturemiddle="-")
-            sd_b = m.add_sidedef(sector=sec2, texturemiddle="-")
-            m.add_linedef(v_a1, v_b2, sidefront=sd_f, sideback=sd_b, twosided=True, blocking=False)
+            mid_sec = m.add_sector(
+                heightfloor=0,
+                heightceiling=128,
+                texturefloor="FLOOR0_1",
+                textureceiling="CEIL1_1",
+                lightlevel=176,
+            )
+            side_wall_tex = wall_tex
         else:
-            # Door sector (height 0 to 128)
-            door_sec = m.add_sector(
+            mid_sec = m.add_sector(
                 heightfloor=0,
                 heightceiling=0,  # starts closed
                 texturefloor="FLAT5_4",
                 textureceiling="CEIL1_1",
                 lightlevel=192,
             )
-            sd_door_front = m.add_sidedef(sector=sec1, texturetop="BIGDOOR2", texturemiddle="-")
-            sd_door_back = m.add_sidedef(sector=door_sec, texturetop="-", texturemiddle="-")
+            side_wall_tex = "DOORTRAK"
 
+        sd_mid_wall = m.add_sidedef(sector=mid_sec, texturemiddle=side_wall_tex)
+
+        # Solid side walls of the corridor/door sector (sidefront faces INSIDE mid_sec)
+        if is_east_west:
+            # East-West: va_high -> vb_high (+x, right=-y=inside), vb_low -> va_low (-x, right=+y=inside)
+            m.add_linedef(va_high, vb_high, sidefront=sd_mid_wall, blocking=True)
+            m.add_linedef(vb_low, va_low, sidefront=sd_mid_wall, blocking=True)
+            # Portals with sidefront facing OUTWARD into sec_low / sec_high (required for playeruse)
+            p1_v1, p1_v2 = va_high, va_low  # -y -> right=-x=sec_low
+            p2_v1, p2_v2 = vb_low, vb_high  # +y -> right=+x=sec_high
+        else:
+            # South-North: va_low -> vb_low (+y, right=+x=inside), vb_high -> va_high (-y, right=-x=inside)
+            m.add_linedef(va_low, vb_low, sidefront=sd_mid_wall, blocking=True)
+            m.add_linedef(vb_high, va_high, sidefront=sd_mid_wall, blocking=True)
+            # Portals with sidefront facing OUTWARD into sec_low / sec_high
+            p1_v1, p1_v2 = va_low, va_high  # +x -> right=-y=sec_low
+            p2_v1, p2_v2 = vb_high, vb_low  # -x -> right=+y=sec_high
+
+        if locked_type is None:
+            sd_low = m.add_sidedef(sector=sec_low, texturemiddle="-")
+            sd_high = m.add_sidedef(sector=sec_high, texturemiddle="-")
+            sd_mid_p = m.add_sidedef(sector=mid_sec, texturemiddle="-")
+            m.add_linedef(p1_v1, p1_v2, sidefront=sd_low, sideback=sd_mid_p, twosided=True, blocking=False)
+            m.add_linedef(p2_v1, p2_v2, sidefront=sd_high, sideback=sd_mid_p, twosided=True, blocking=False)
+        else:
             special = SPECIAL_DOOR_LOCKED if locked_type > 0 else SPECIAL_DOOR_RAISE
             arg3 = locked_type if locked_type > 0 else 0
+            sd_low = m.add_sidedef(sector=sec_low, texturetop="BIGDOOR2", texturemiddle="-")
+            sd_high = m.add_sidedef(sector=sec_high, texturetop="BIGDOOR2", texturemiddle="-")
+            sd_mid_d = m.add_sidedef(sector=mid_sec, texturetop="-", texturemiddle="-")
 
-            m.add_linedef(
-                v_a1,
-                v_b2,
-                sidefront=sd_door_front,
-                sideback=sd_door_back,
-                twosided=True,
-                blocking=False,
-                special=special,
-                arg0=0,
-                arg1=16,
-                arg2=150,
-                arg3=arg3,
-                playeruse=True,
-                monsteruse=True,
-                repeatspecial=True,
-                locknumber=locked_type,
-            )
+            for pv1, pv2, sd_outer in ((p1_v1, p1_v2, sd_low), (p2_v1, p2_v2, sd_high)):
+                m.add_linedef(
+                    pv1,
+                    pv2,
+                    sidefront=sd_outer,
+                    sideback=sd_mid_d,
+                    twosided=True,
+                    blocking=False,
+                    special=special,
+                    arg0=0,
+                    arg1=16,
+                    arg2=150,
+                    arg3=arg3,
+                    playeruse=True,
+                    monsteruse=(locked_type == 0),
+                    repeatspecial=True,
+                    locknumber=locked_type,
+                )

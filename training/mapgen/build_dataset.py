@@ -27,7 +27,7 @@ from training.mapgen.generator import MapFamily, ProceduralMapGenerator
 
 def generate_dataset(
     output_dir: str | Path = "maps/dataset",
-    total_maps: int = 200,
+    total_maps: int = 600,
     val_split: float = 0.15,
     seed: int = 42,
 ) -> dict:
@@ -74,7 +74,7 @@ def generate_dataset(
             if not solvable:
                 # Retry with new seed if ever unsolvable
                 retries = 0
-                while not solvable and retries < 10:
+                while not solvable and retries < 25:
                     cur_seed += 1
                     gen = ProceduralMapGenerator(seed=cur_seed)
                     m, solvable = gen.generate(
@@ -83,6 +83,8 @@ def generate_dataset(
                         difficulty=difficulty,
                     )
                     retries += 1
+            if not solvable:
+                raise RuntimeError(f"Failed to generate solvable map for {family} after retries")
 
             filename = f"{family.value}_{i:04d}.wad"
             filepath = target_dir / filename
@@ -113,7 +115,7 @@ def generate_dataset(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Generate procedural Doom map dataset")
     parser.add_argument("--output", type=str, default="maps/dataset", help="Output directory")
-    parser.add_argument("--count", type=int, default=100, help="Total maps to generate")
+    parser.add_argument("--count", type=int, default=600, help="Total maps to generate")
     parser.add_argument("--val-split", type=float, default=0.15, help="Validation fraction")
     parser.add_argument("--seed", type=int, default=1000, help="Random seed")
     args = parser.parse_args()

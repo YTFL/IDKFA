@@ -93,9 +93,20 @@ class ProcessedObservation:
 class ObservationPreprocessor:
     """End-to-end observation preprocessor."""
 
-    def __init__(self, normalize_vitals: bool = True):
+    def __init__(self, normalize_vitals: bool = True, use_depth: bool = True):
         self.normalize_vitals = normalize_vitals
+        self.use_depth = use_depth
         self.prev_action = np.zeros(ACTION_DIM, dtype=np.float32)
+
+    def to_config(self) -> dict[str, Any]:
+        return {"normalize_vitals": self.normalize_vitals, "use_depth": self.use_depth}
+
+    @classmethod
+    def from_config(cls, config: Mapping[str, Any]) -> ObservationPreprocessor:
+        return cls(
+            normalize_vitals=bool(config.get("normalize_vitals", True)),
+            use_depth=bool(config.get("use_depth", True)),
+        )
 
     def reset(self) -> None:
         """Reset episodic state (e.g. previous action buffer)."""
@@ -124,14 +135,17 @@ class ObservationPreprocessor:
         rays_feat = np.column_stack([rays_dist, rays_log, hit_one_hot]).astype(np.float32)
 
         # 2. Process Depth Buffer: downsample to (32,)
-        depth_raw = np.nan_to_num(obs.get("depth"), nan=0.0)
-        if depth_raw is not None and depth_raw.size > 0:
-            # depth is (120, 160) uint8: average pool across height, then bucket to 32
-            # 160 / 32 = 5 columns per pool
-            depth_f = depth_raw.astype(np.float32) / 255.0
-            # Mean over vertical band (central 60 rows where geometry lives)
-            depth_band = depth_f[30:90, :].mean(axis=0)  # (160,)
-            depth_feat = depth_band.reshape(DEPTH_DOWN_WIDTH, -1).mean(axis=1)  # (32,)
+        depth_raw = obs.get("depth") if self.use_depth else None
+        if depth_raw is not None:
+            depth_arr = np.nan_to_num(depth_raw, nan=0.0)
+            if depth_arr.ndim == 2 and depth_arr.shape[0] >= 90 and depth_arr.shape[1] >= DEPTH_DOWN_WIDTH:
+                depth_f = depth_arr.astype(np.float32) / 255.0
+                # Mean over vertical band (central 60 rows where geometry lives)
+                depth_band = depth_f[30:90, :].mean(axis=0)  # (160,)
+                cols = (depth_band.shape[0] // DEPTH_DOWN_WIDTH) * DEPTH_DOWN_WIDTH
+                depth_feat = depth_band[:cols].reshape(DEPTH_DOWN_WIDTH, -1).mean(axis=1)
+            else:
+                depth_feat = np.zeros(DEPTH_DOWN_WIDTH, dtype=np.float32)
         else:
             depth_feat = np.zeros(DEPTH_DOWN_WIDTH, dtype=np.float32)
 

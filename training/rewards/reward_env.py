@@ -30,6 +30,8 @@ class ShapedRewardEnv(gym.Wrapper):
         use_rnd: bool = True,
         use_episodic_novelty: bool = True,
         sticky_action_prob: float = 0.05,
+        rnd: RNDCuriosity | None = None,
+        update_rnd: bool = True,
     ):
         super().__init__(env)
         self.reward_shaper = ExtrinsicRewardShaper(reward_config)
@@ -37,8 +39,9 @@ class ShapedRewardEnv(gym.Wrapper):
         self.use_rnd = use_rnd
         self.use_episodic_novelty = use_episodic_novelty
         self.sticky_action_prob = sticky_action_prob
+        self.update_rnd = update_rnd
 
-        self.rnd = RNDCuriosity() if use_rnd else None
+        self.rnd = rnd if rnd is not None else (RNDCuriosity() if use_rnd else None)
         self.episodic_buffer = EpisodicNoveltyBuffer() if use_episodic_novelty else None
 
         self.last_action: np.ndarray | None = None
@@ -83,7 +86,7 @@ class ShapedRewardEnv(gym.Wrapper):
         # 3. Intrinsic Curiosity
         curiosity_bonus = 0.0
         if self.rnd:
-            r_rnd = self.rnd.compute_intrinsic_reward(processed_obs, update_predictor=True)
+            r_rnd = self.rnd.compute_intrinsic_reward(processed_obs, update_predictor=self.update_rnd)
             curiosity_bonus += r_rnd
 
         if self.episodic_buffer:

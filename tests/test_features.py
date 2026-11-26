@@ -77,6 +77,17 @@ def test_feature_pipeline_nan_and_inf_resilience():
     assert not np.isnan(flat).any()
     assert not np.isinf(flat).any()
 
+    # Verify depth=None does not raise IndexError
+    no_depth_obs = {
+        "rays": corrupt_obs["rays"],
+        "depth": None,
+        "vitals": np.zeros(17, dtype=np.float32),
+        "visible_entities": {},
+    }
+    p_no_depth = preprocessor.process(no_depth_obs)
+    assert p_no_depth.depth.shape == (DEPTH_DOWN_WIDTH,)
+    assert np.all(p_no_depth.depth == 0.0)
+
 
 def test_running_mean_std():
     rms = RunningMeanStd(shape=(5,))

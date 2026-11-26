@@ -1,84 +1,100 @@
-# devforge-doom-template
+# Nordlicht — Zero-Shot DOOM Agent (EMLRP)
 
-Starter template for **Yugaantar 2026 · DevForge — Track 1: "Can It Play DOOM?"**
+Submission for **Yugaantar 2026 · DevForge Track 1: "Can It Play DOOM?"**.
+A `1,904,053`-parameter neural agent (**EgoMap-Landmark Recurrent Policy — EMLRP**) built to play unseen `freedoom2.wad` levels zero-shot across combat, multi-room exploration, keycard puzzles, and full gauntlets using strictly ego-centric observations (`rays`, `depth`, `vitals`, `visible_entities`) and trained neural parameters.
 
-> For decades, *"Can it run DOOM?"* was the ultimate hardware test. Now: **can your neural network
-> actually play DOOM?** Train an agent that plays unseen levels **zero-shot**: survive ambushes,
-> navigate multi-room layouts, find keycards, unlock doors and reach the exit.
+---
 
-No dataset is provided. Your agent learns by interacting with the engine.
+## Architecture Highlights (`submission/`)
 
-## Quickstart
+- **Circular 1D Ray Encoder** ([ray_encoder.py](submission/models/ray_encoder.py)): Circular convolutions over 64 ego-centric rays (linear + log distance and 6 hit types).
+- **Entity Set Transformer** ([entity_encoder.py](submission/models/entity_encoder.py)): Permutation-invariant 2-layer self-attention + ray-conditioned attention pooling over up to 32 visible entities.
+- **Egocentric Neural Spatial Map** ([spatial_map.py](submission/models/spatial_map.py)): Differentiable `F.grid_sample` affine-warped `32x32x16` feature grid driven by learned egomotion (`delta_xy, delta_theta`) + ConvGRU spatial writes.
+- **Landmark Slot Memory** ([landmark_memory.py](submission/models/landmark_memory.py)): `16`-slot egocentric key-value memory tracking high-salience doors/items/entities and conditioning cross-attention on binary keycard vitals.
+- **GRU + Latent Hierarchical Mode Head** ([emlrp.py](submission/models/emlrp.py)): `256`-dim GRU fused with a learned `5`-mode controller, `MultiBinary(9)` actor head, dual extrinsic/intrinsic critics, and training-only auxiliary heads.
+- **Inference Agent** ([agent.py](submission/agent.py)): Runs single-step inference under `torch.inference_mode()` (`8.09 ms/step` over 1,050 decisions on 1 CPU thread, compact `7.32 MB` weights via Git LFS, full sanitization and edge-safe exception recovery).
 
-1. Click **"Use this template"** on GitHub to create your team's (public) repository.
-2. Set up the environment (Python 3.13, [uv](https://docs.astral.sh/uv/)):
+---
 
-   ```bash
-   uv sync                 # installs vizdoom, gymnasium and the official wrapper (env/) in editable mode
-   uv run python validate.py
-   ```
+## Setup
 
-   Or use the official image, which is exactly what the scorer runs:
-
-   ```bash
-   docker build -t devforge-doom .            # or: docker pull <official image tag, announced>
-   python validate.py --docker --image devforge-doom   # installs requirements.txt, then runs sandboxed like the scorer
-   ```
-
-3. Replace the random baseline in `submission/agent.py` with your trained agent.
-4. Put weights in `submission/weights/` (Git LFS) and training code in `training/`.
-5. Run `python validate.py --docker` and submit your repo URL.
-
-## Repository layout
-
-```
-env/                  official ViZDoom Gymnasium wrapper (doom_env): spaces, sensors, protocol, limits
-maps/                 one small test map (NOT an evaluation map); bring your own for training
-submission/agent.py   your DoomAgent: the evaluation entry point
-submission/weights/   model weights (Git LFS)
-training/             your training pipeline
-validate.py           run before submitting
-tests/                tests for the wrapper and validator (uv run pytest)
-docs/                 contract, rules, submission guide, evaluation details
+```bash
+uv sync
+git lfs pull
 ```
 
-## Using the environment
+---
 
-```python
-from doom_env import make_env
+## Reproducing Training & Evaluation
 
-env = make_env("maps/two_rooms.wad")     # test map; use your own maps for training
-obs, info = env.reset(seed=0)
-obs, reward, terminated, truncated, info = env.step(env.action_space.sample())
+### Train from Config (Curriculum Stages 0–5)
+
+```bash
+python -m training.train --config training/configs/ppo_default.yaml --device cuda
 ```
 
-Observations are a dict of `rgb`, `depth`, `vitals`, `rays` and `visible_entities`, all
-ego-centric and partially observable. See [docs/CONTRACT.md](docs/CONTRACT.md).
-The wrapper's `reward` is a basic default for convenience. Shape your own reward for training.
+Resume from a saved checkpoint:
 
-**Compute tip:** training only on raw pixels is expensive. The `rays`, `visible_entities` and
-`vitals` signals run thousands of steps per second on a CPU. Hybrid pixel + spatial models are welcome.
+```bash
+python -m training.train --config training/configs/ppo_default.yaml --resume submission/weights/emlrp_latest.pt --device cuda
+```
 
-## Hardware at evaluation
+### Export Inference Weights & Evaluate
 
-One NVIDIA **RTX 3090 (24 GB)** shared between evaluation workers. Each agent gets **2 GB VRAM,
-8 GB RAM and 1 CPU thread**, so keep models compact and inference fast
-(see [hardware](docs/EVALUATION.md#hardware) and [timeouts](docs/EVALUATION.md#timeouts)).
-`validate.py` runs your agent under the same CPU/RAM limits and reports GPU memory.
+```bash
+python training/tools/export_weights.py --checkpoint checkpoints/emlrp_ppo_v1/best.pt --output submission/weights/agent.pt
+python training/tools/eval_inference_modes.py --checkpoint submission/weights/agent.pt --max-maps-per-tier 4
+python training/tools/run_eval_report.py --checkpoint submission/weights/agent.pt
+python training/tools/run_ablations.py --checkpoint submission/weights/agent.pt
+python training/tools/analyze_failures.py --checkpoint submission/weights/agent.pt
+```
 
-## Documentation
+### Live Q&A Memory Demo & 2-Page Brief
 
-| Doc | What's inside |
-| --- | --- |
-| [docs/CONTRACT.md](docs/CONTRACT.md) | Observation/action spaces and the `DoomAgent` interface |
-| [docs/RULES.md](docs/RULES.md) | Ground rules: what's allowed, what gets you disqualified |
-| [docs/SUBMISSION.md](docs/SUBMISSION.md) | Submission checklist, Git LFS, 1 GB limit, `requirements.txt` |
-| [docs/EVALUATION.md](docs/EVALUATION.md) | Map tiers, scoring categories, timeouts, replays |
+```bash
+python training/tools/demo_replay.py --checkpoint submission/weights/agent.pt --terminal --save-html runs/diagnostics/demo_replay.html
+python training/tools/build_brief.py --eval-json runs/diagnostics/eval_report.json --ablation-json runs/diagnostics/ablation_report.json --output docs/brief.pdf
+```
 
-## Rules in one minute
+### Validate Before Submission
 
-- Actions must come from **trained neural parameters**: no rule trees, no `A*`/Dijkstra, no `atan2` aimbots,
-  no unmodified off-the-shelf SB3.
-- Change anything you want **during training**. Evaluation uses the **vanilla engine**, the
-  official wrapper and **unseen maps**.
-- Create the repo during the hackathon. Libraries are fine; the core architecture and training must be yours.
+```bash
+python training/tools/pre_submit_check.py
+python validate.py
+python validate.py --docker
+```
+
+*(Note: `validate.py` uses Unix domain sockets for `dry_run()`; on Windows hosts run `validate.py --docker` via Docker/WSL.)*
+
+---
+
+## Repository Layout
+
+```text
+submission/
+  agent.py                  # DoomAgent evaluation entry point
+  features.py               # Shared preprocessing (zero train/serve skew)
+  models/                   # EMLRP modules & B=1 / sequence adapters
+  weights/agent.pt          # Compact Git LFS inference weights (~7.3 MB)
+training/
+  train.py                  # Config-driven Recurrent PPO training CLI
+  eval.py                   # Multi-seed tier-weighted validation harness
+  algo/ppo_recurrent.py     # Truncated BPTT Recurrent PPO + dual GAE + bf16 AMP
+  configs/                  # ppo_default.yaml, curriculum.yaml, ablations
+  envs/                     # Curriculum wrappers & double-buffered SubprocVecEnv
+  mapgen/                   # Procedural UDMF map factory & BFS solvability checker
+  rewards/                  # Extrinsic shaping + RND + episodic novelty
+  tools/                    # Weight export, eval/ablation reports, failure analyzer, demo, brief
+tests/                      # Unit, memory, robustness, interrupt & submission tests
+docs/
+  CONTRACT.md               # Official observation/action/interface contract
+  EVALUATION.md             # Scoring & sandbox hardware limits
+  brief.pdf                 # 2-page technical project brief
+```
+
+---
+
+## Licences & Rules Compliance
+
+- Decisions come strictly from trained neural network weights (`EMLRPPolicy`). No rule trees, `A*`/Dijkstra pathfinding, or `atan2` aimbots exist in `submission/`.
+- Evaluation uses the unmodified ViZDoom `1.3.3` engine and `freedoom2.wad`. Redistributed Freedoom assets in `freedoom-0.13.0/` remain under the Freedoom BSD-style licence ([freedoom-0.13.0/COPYING.txt](freedoom-0.13.0/COPYING.txt)).

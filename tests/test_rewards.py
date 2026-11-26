@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 from doom_env import make_env
+from fixtures import fixture_wad
 from submission.features import ObservationPreprocessor
 from training.rewards.curiosity import EpisodicNoveltyBuffer, RNDCuriosity
 from training.rewards.reward_env import ShapedRewardEnv
@@ -153,6 +154,48 @@ def test_rnd_curiosity_bonus():
     for _ in range(20):
         r_after = rnd.compute_intrinsic_reward(p_obs, update_predictor=True)
     assert r_after < r_init
+    assert r_init <= 2.0  # bounded normalization, no early spike
+
+
+def test_raised_floor_door_not_prematurely_rewarded():
+    shaper = ExtrinsicRewardShaper()
+    # Closed door on a raised floor (floor=32, ceiling=32) must NOT trigger door_reward
+    _, bd_closed = shaper.compute(
+        obs={},
+        privileged_state={
+            "x": 100.0,
+            "y": 100.0,
+            "health": 100.0,
+            "sector_floor": np.array([0.0, 32.0]),
+            "sector_ceiling": np.array([128.0, 32.0]),
+            "door_lock": np.array([-1, 1]),
+        },
+        base_reward=0.0,
+        terminated=False,
+        truncated=False,
+        info={},
+    )
+    assert bd_closed.door == 0.0
+    assert bd_closed.locked_door == 0.0
+
+    # Once opened (ceiling=128 > floor+16), rewards fire
+    _, bd_open = shaper.compute(
+        obs={},
+        privileged_state={
+            "x": 100.0,
+            "y": 100.0,
+            "health": 100.0,
+            "sector_floor": np.array([0.0, 32.0]),
+            "sector_ceiling": np.array([128.0, 128.0]),
+            "door_lock": np.array([-1, 1]),
+        },
+        base_reward=0.0,
+        terminated=False,
+        truncated=False,
+        info={},
+    )
+    assert bd_open.door == pytest.approx(0.5)
+    assert bd_open.locked_door == pytest.approx(2.0)
 
 
 def test_episodic_novelty_buffer():
@@ -195,3 +238,38 @@ def test_shaped_reward_env_full_episode():
         if term or trunc:
             break
     env.close()
+
+
+def test_shaped_reward_env_real_key_door_exit_progression():
+    """Verify key pickup, door open, locked door unlock, exit, and bounded curiosity in real ViZDoom."""
+    wad = fixture_wad("############\n#P.r..R...E#\n############")
+    env = ShapedRewardEnv(
+        make_env(wad, episode_ticks=1000),
+        use_rnd=True,
+        use_episodic_novelty=True,
+        sticky_action_prob=0.0,
+    )
+    env.reset(seed=0)
+    fwd = np.array([1, 0, 0, 0, 0, 0, 0, 0, 0], dtype=np.int8)
+    use = np.array([0, 0, 0, 0, 0, 0, 0, 1, 0], dtype=np.int8)
+
+    totals = {"key": 0.0, "door": 0.0, "locked_door": 0.0, "exit": 0.0, "curiosity": 0.0}
+    last_x = None
+    for i in range(240):
+        st = env.unwrapped.privileged_state()
+        stuck = last_x is not None and abs(st["x"] - last_x) < 0.5
+        last_x = st["x"]
+        act = use if (stuck and i % 6 == 0) else fwd
+        _, _, term, trunc, info = env.step(act)
+        bd = info["reward_breakdown"]
+        for k in totals:
+            totals[k] += bd[k]
+        if term or trunc:
+            break
+    env.close()
+
+    assert totals["key"] == pytest.approx(2.0)
+    assert totals["door"] == pytest.approx(0.5)
+    assert totals["locked_door"] == pytest.approx(2.0)
+    assert totals["exit"] >= 10.0
+    assert 0.0 < totals["curiosity"] < totals["exit"]
