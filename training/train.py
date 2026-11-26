@@ -11,7 +11,10 @@ import argparse
 import csv
 import dataclasses
 import json
+import os
+import signal
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -93,29 +96,42 @@ def _save_checkpoint(
     global_step: int,
     update_idx: int,
     best_val_score: float,
+    shield_sigint: bool = False,
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    torch.save(
-        {
-            "model_state_dict": policy.state_dict(),
-            "model_config": dataclasses.asdict(policy.config),
-            "preprocess_config": prep.to_config(),
-            "optimizer_state_dict": trainer.optimizer.state_dict(),
-            "rnd_predictor_state_dict": rnd.predictor.state_dict(),
-            "rnd_target_state_dict": rnd.target.state_dict(),
-            "rnd_optimizer_state_dict": rnd.optimizer.state_dict(),
-            "rnd_rms": {
-                "mean": rnd.reward_rms.mean,
-                "var": rnd.reward_rms.var,
-                "count": rnd.reward_rms.count,
-            },
-            "curriculum_stage": int(curriculum.current_stage),
-            "global_step": int(global_step),
-            "update_idx": int(update_idx),
-            "best_val_score": float(best_val_score),
+    tmp_path = path.with_name(f".{path.name}.tmp.{os.getpid()}")
+    payload = {
+        "model_state_dict": policy.state_dict(),
+        "model_config": dataclasses.asdict(policy.config),
+        "preprocess_config": prep.to_config(),
+        "optimizer_state_dict": trainer.optimizer.state_dict(),
+        "rnd_predictor_state_dict": rnd.predictor.state_dict(),
+        "rnd_target_state_dict": rnd.target.state_dict(),
+        "rnd_optimizer_state_dict": rnd.optimizer.state_dict(),
+        "rnd_rms": {
+            "mean": rnd.reward_rms.mean,
+            "var": rnd.reward_rms.var,
+            "count": rnd.reward_rms.count,
         },
-        path,
-    )
+        "curriculum_stage": int(curriculum.current_stage),
+        "global_step": int(global_step),
+        "update_idx": int(update_idx),
+        "best_val_score": float(best_val_score),
+    }
+    is_main = shield_sigint and threading.current_thread() is threading.main_thread()
+    prev_sig = signal.getsignal(signal.SIGINT) if is_main else None
+    if is_main:
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+    try:
+        torch.save(payload, tmp_path)
+        os.replace(tmp_path, path)
+    except BaseException:
+        if tmp_path.exists():
+            tmp_path.unlink(missing_ok=True)
+        raise
+    finally:
+        if is_main and prev_sig is not None:
+            signal.signal(signal.SIGINT, prev_sig)
 
 
 def train(
@@ -255,8 +271,37 @@ def train(
     if device.type == "cuda":
         torch.cuda.reset_peak_memory_stats(device)
 
+    interrupted = False
+    stop_requested = False
+    last_completed_update = start_update
+    last_completed_step = global_step
+    saved_update = start_update
+    in_ppo_update = False
+
+    is_main_thread = threading.current_thread() is threading.main_thread()
+    prev_sigint = signal.getsignal(signal.SIGINT) if is_main_thread else None
+
+    def _handle_sigint(signum: int, frame: Any) -> None:
+        nonlocal stop_requested
+        stop_requested = True
+        print(
+            "\n[train] Ctrl+C caught — finishing current update safely and saving latest.pt "
+            "(press Ctrl+C again to abort immediately at last completed update).",
+            flush=True,
+        )
+        if prev_sigint is not None and prev_sigint != signal.SIG_IGN:
+            signal.signal(signal.SIGINT, prev_sigint)
+        else:
+            signal.signal(signal.SIGINT, signal.default_int_handler)
+
+    if is_main_thread:
+        signal.signal(signal.SIGINT, _handle_sigint)
+
     try:
         for update_idx in range(start_update + 1, total_updates + 1):
+            if stop_requested:
+                interrupted = True
+                break
             t_up = time.perf_counter()
             buffer.reset()
             progress = min(1.0, global_step / max(1, total_steps))
@@ -366,7 +411,13 @@ def train(
                 intrinsic_coef=intrinsic_coef,
             )
 
-            ppo_stats = trainer.update(buffer, progress_frac=progress)
+            in_ppo_update = True
+            try:
+                ppo_stats = trainer.update(buffer, progress_frac=progress)
+            finally:
+                in_ppo_update = False
+            last_completed_update = update_idx
+            last_completed_step = global_step
             now = time.perf_counter()
             dt_up = now - t_up
             fps = steps_per_update / max(1e-6, dt_up)
@@ -408,7 +459,8 @@ def train(
             }
 
             if (
-                eval_interval > 0
+                not stop_requested
+                and eval_interval > 0
                 and update_idx % eval_interval == 0
                 and manifest_path
                 and Path(manifest_path).is_file()
@@ -433,11 +485,14 @@ def train(
                         policy, prep, trainer, rnd, curriculum, global_step, update_idx, best_val_score,
                     )
 
-            if save_interval > 0 and (update_idx % save_interval == 0 or update_idx == total_updates):
+            if stop_requested or (
+                save_interval > 0 and (update_idx % save_interval == 0 or update_idx == total_updates)
+            ):
                 _save_checkpoint(
                     ckpt_dir / "latest.pt",
                     policy, prep, trainer, rnd, curriculum, global_step, update_idx, best_val_score,
                 )
+                saved_update = update_idx
 
             with jsonl_path.open("a", encoding="utf-8") as fj:
                 fj.write(json.dumps(row) + "\n")
@@ -467,23 +522,65 @@ def train(
                 f"Aux={row['aux_loss']:.3f} VRAM={row['peak_vram_mb']:.0f}MB",
                 flush=True,
             )
+            if stop_requested:
+                interrupted = True
+                print(
+                    f"[train] Graceful stop saved at Update {update_idx} (step {global_step}). "
+                    f"Resume with: --resume {ckpt_dir / 'latest.pt'}",
+                    flush=True,
+                )
+                break
+    except KeyboardInterrupt:
+        interrupted = True
+        global_step = last_completed_step
+        if not in_ppo_update and last_completed_update > saved_update:
+            _save_checkpoint(
+                ckpt_dir / "latest.pt",
+                policy, prep, trainer, rnd, curriculum,
+                last_completed_step, last_completed_update, best_val_score,
+                shield_sigint=True,
+            )
+            saved_update = last_completed_update
+            print(
+                f"\n[train] KeyboardInterrupt — saved clean checkpoint at Update {last_completed_update} "
+                f"(step {last_completed_step}): {ckpt_dir / 'latest.pt'}",
+                flush=True,
+            )
+        elif in_ppo_update:
+            print(
+                f"\n[train] KeyboardInterrupt mid-update — kept last clean checkpoint at Update {saved_update} "
+                f"(step {last_completed_step}): {ckpt_dir / 'latest.pt'}",
+                flush=True,
+            )
+        else:
+            print(
+                f"\n[train] KeyboardInterrupt — latest checkpoint is already saved at Update {saved_update} "
+                f"(step {last_completed_step}): {ckpt_dir / 'latest.pt'}",
+                flush=True,
+            )
     finally:
+        if is_main_thread and prev_sigint is not None:
+            signal.signal(signal.SIGINT, prev_sigint)
         vec_env.close()
         if tb_writer is not None:
             tb_writer.close()
 
-    # Always write final latest.pt
-    _save_checkpoint(
-        ckpt_dir / "latest.pt",
-        policy, prep, trainer, rnd, curriculum, global_step, total_updates, best_val_score,
-    )
+    if not interrupted and saved_update != last_completed_update:
+        _save_checkpoint(
+            ckpt_dir / "latest.pt",
+            policy, prep, trainer, rnd, curriculum,
+            last_completed_step, last_completed_update, best_val_score,
+        )
+        saved_update = last_completed_update
     return {
         "run_dir": str(run_dir),
         "ckpt_dir": str(ckpt_dir),
         "latest_ckpt": str(ckpt_dir / "latest.pt"),
         "best_ckpt": str(ckpt_dir / "best.pt"),
         "last_metrics": last_metrics,
-        "global_step": global_step,
+        "global_step": last_completed_step,
+        "saved_update": saved_update,
+        "interrupted": interrupted,
     }
 
 

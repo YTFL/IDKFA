@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import shutil
+import signal
 from pathlib import Path
 
 import numpy as np
@@ -243,3 +245,79 @@ def test_smoke_train_resume_and_eval(tmp_path: Path) -> None:
     )
     assert "weighted_score" in val_report
     assert val_report["mean_ms_per_step"] < 40.0
+
+
+def test_keyboard_interrupt_protection(monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg = load_curriculum_yaml("training/configs/ppo_smoke.yaml")
+    cfg["train"]["eval_interval_updates"] = 0
+    cfg["train"]["save_interval_updates"] = 100  # Periodic save would skip Update 1
+    cfg["ppo"]["ppo_epochs"] = 1
+
+    orig_sigint = signal.getsignal(signal.SIGINT)
+    orig_update = RecurrentPPOTrainer.update
+    orig_step = DummyVecEnv.step
+
+    # 1) Single SIGINT during Update 1 finishes Update 1 cleanly, saves latest.pt, and stops early
+    run_a = "pytest_sigint_graceful"
+    calls = {"upd": 0}
+
+    def _update_and_sigint(self, buf, progress_frac):
+        calls["upd"] += 1
+        res = orig_update(self, buf, progress_frac)
+        if calls["upd"] == 1:
+            signal.raise_signal(signal.SIGINT)
+        return res
+
+    monkeypatch.setattr(RecurrentPPOTrainer, "update", _update_and_sigint)
+    try:
+        out_a = train(
+            config=cfg,
+            num_envs_override=2,
+            total_steps_override=256,
+            run_name_override=run_a,
+            force_dummy_vec=True,
+        )
+        assert out_a["interrupted"] is True
+        assert out_a["saved_update"] == 1
+        assert out_a["global_step"] == 64
+        ckpt_a = torch.load(out_a["latest_ckpt"], map_location="cpu", weights_only=False)
+        assert ckpt_a["update_idx"] == 1
+        assert ckpt_a["global_step"] == 64
+        assert not list(Path(out_a["ckpt_dir"]).glob("*.tmp*"))
+        assert signal.getsignal(signal.SIGINT) == orig_sigint
+    finally:
+        monkeypatch.undo()
+        for base in ("runs", "checkpoints"):
+            shutil.rmtree(Path(base) / run_a, ignore_errors=True)
+
+    # 2) Direct KeyboardInterrupt mid-rollout (Update 2) saves last completed Update 1 cleanly
+    run_b = "pytest_sigint_hard"
+    step_calls = {"n": 0}
+
+    def _step_and_interrupt(self, actions):
+        step_calls["n"] += 1
+        if step_calls["n"] == 40:
+            raise KeyboardInterrupt("simulated second Ctrl+C")
+        return orig_step(self, actions)
+
+    monkeypatch.setattr(DummyVecEnv, "step", _step_and_interrupt)
+    try:
+        out_b = train(
+            config=cfg,
+            num_envs_override=2,
+            total_steps_override=256,
+            run_name_override=run_b,
+            force_dummy_vec=True,
+        )
+        assert out_b["interrupted"] is True
+        assert out_b["saved_update"] == 1
+        assert out_b["global_step"] == 64
+        ckpt_b = torch.load(out_b["latest_ckpt"], map_location="cpu", weights_only=False)
+        assert ckpt_b["update_idx"] == 1
+        assert ckpt_b["global_step"] == 64
+        assert not list(Path(out_b["ckpt_dir"]).glob("*.tmp*"))
+        assert signal.getsignal(signal.SIGINT) == orig_sigint
+    finally:
+        monkeypatch.undo()
+        for base in ("runs", "checkpoints"):
+            shutil.rmtree(Path(base) / run_b, ignore_errors=True)

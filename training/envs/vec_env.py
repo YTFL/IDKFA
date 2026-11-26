@@ -12,7 +12,9 @@ import math
 import multiprocessing as mp
 import os
 import shutil
+import signal
 import tempfile
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -310,6 +312,8 @@ class _SingleDoomWorker:
 
 
 def _worker_loop(conn: Any, worker_id: int, cfg: WorkerConfig) -> None:
+    # Let the parent coordinator handle Ctrl+C / SIGINT and shut workers down cleanly
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
     # Silence ViZDoom C++ startup logs at OS fd 1 inside background workers
     devnull_fd = os.open(os.devnull, os.O_WRONLY)
     os.dup2(devnull_fd, 1)
@@ -329,7 +333,7 @@ def _worker_loop(conn: Any, worker_id: int, cfg: WorkerConfig) -> None:
                 worker.close()
                 conn.send(True)
                 break
-    except EOFError:
+    except (EOFError, BrokenPipeError, KeyboardInterrupt):
         worker.close()
     finally:
         worker.close()
@@ -431,14 +435,21 @@ class SubprocVecEnv:
                 pass
         for remote in self._remotes:
             try:
-                remote.recv()
+                if remote.poll(0.5):
+                    remote.recv()
+            except Exception:
+                pass
+            try:
                 remote.close()
             except Exception:
                 pass
+        deadline = time.monotonic() + 2.0
         for proc in self._procs:
-            proc.join(timeout=5.0)
+            remaining = max(0.0, deadline - time.monotonic())
+            proc.join(timeout=remaining)
             if proc.is_alive():
                 proc.terminate()
+                proc.join(timeout=0.5)
         if self._owned_cache_root is not None:
             shutil.rmtree(self._owned_cache_root, ignore_errors=True)
             self._owned_cache_root = None
