@@ -1,0 +1,74 @@
+# Curriculum Training Configuration
+# Follows PLAN.md Phase 1 Stage Design
+
+curriculum:
+  initial_stage: 0
+  promotion_threshold: 0.70    # Advance when rolling success >= 70%
+  window_size: 100             # Episodes window
+  rehearsal_prob: 0.15         # 15% probability of sampling earlier stages
+
+stages:
+  0:
+    name: "STAGE_0_AIM_SHOOT"
+    description: "Single room, one enemy. Learn turning, aiming, and firing."
+    god_mode: false
+    infinite_ammo: true
+    auto_open_doors: false
+    num_rooms: 1
+    difficulty: 0.1
+
+  1:
+    name: "STAGE_1_COMBAT_ARENA"
+    description: "Combat arenas with multiple enemies and health/ammo pickups."
+    god_mode: false
+    infinite_ammo: false
+    auto_open_doors: false
+    num_rooms: 2
+    difficulty: 0.5
+
+  2:
+    name: "STAGE_2_NAV_AUTO_DOORS"
+    description: "Multi-room navigation to exit, auto-open doors, no enemies."
+    god_mode: true
+    infinite_ammo: false
+    auto_open_doors: true
+    num_rooms: 4
+    difficulty: 0.0
+
+  3:
+    name: "STAGE_3_NAV_DOORS_ENEMIES"
+    description: "Multi-room navigation with ordinary doors and enemies."
+    god_mode: false
+    infinite_ammo: false
+    auto_open_doors: false
+    num_rooms: 6
+    difficulty: 0.5
+
+  4:
+    name: "STAGE_4_KEYCARD_PUZZLE"
+    description: "Keycard puzzle maps with vanilla rules."
+    god_mode: false
+    infinite_ammo: false
+    auto_open_doors: false
+    num_rooms: 5
+    difficulty: 0.6
+
+  5:
+    name: "STAGE_5_FULL_GAUNTLET"
+    description: "Full gauntlet mix (combat, rooms, keys, doors, exit)."
+    god_mode: false
+    infinite_ammo: false
+    auto_open_doors: false
+    num_rooms: 7
+    difficulty: 0.8
+
+rewards:
+  exit_reached: 10.0
+  key_pickup: 2.0
+  door_opened: 0.5
+  locked_door_unlocked: 2.0
+  enemy_killed: 0.5
+  damage_taken_per_hp: -0.005
+  death: -3.0
+  time_step: -0.001
+  new_cell_explored: 0.02
