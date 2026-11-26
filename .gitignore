@@ -222,3 +222,6 @@ _vizdoom.ini
 
 # Local validator / scorer artifacts
 *.lmp
+
+# Local reference notes
+docs/contract_notes.md
