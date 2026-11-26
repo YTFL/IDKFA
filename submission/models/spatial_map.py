@@ -40,9 +40,10 @@ class EgomotionEstimator(nn.Module):
         vel_left = -vel_right
 
         # Half-span of the 32x32 map in DOOM map units: (32 * 64) / 2 = 1024.0
+        # Velocity in vitals is map units per tic -> multiply by frame_skip for per-step displacement
         half_span = 0.5 * cfg.map_size * cfg.map_cell_units
-        prior_dx = vel_fwd / half_span
-        prior_dy = vel_left / half_span
+        prior_dx = (vel_fwd * cfg.frame_skip) / half_span
+        prior_dy = (vel_left * cfg.frame_skip) / half_span
 
         turn_left = prev_action[:, cfg.turn_left_idx]
         turn_right = prev_action[:, cfg.turn_right_idx]

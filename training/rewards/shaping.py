@@ -114,7 +114,8 @@ class ExtrinsicRewardShaper:
         self.position_history: collections.deque[tuple[float, float]] = collections.deque(
             maxlen=self.config.stuck_window
         )
-        self.last_potential: float = 0.0
+        self.last_potential: float | None = None
+        self.last_target_coords: tuple[float, float] | None = None
 
     def compute(
         self,
@@ -170,14 +171,20 @@ class ExtrinsicRewardShaper:
                     self.keys_held.add(k)
                     breakdown.key += self.config.key_reward
 
-        # 4. Doors & Locked Doors: checked via sector_ceiling and door_lock
+        # 4. Doors & Locked Doors: checked via sector_ceiling - sector_floor and door_lock
         door_locks = privileged_state.get("door_lock")
         sector_ceilings = privileged_state.get("sector_ceiling")
+        sector_floors = privileged_state.get("sector_floor")
         if isinstance(door_locks, np.ndarray) and isinstance(sector_ceilings, np.ndarray):
             for sec_id, lock_val in enumerate(door_locks):
                 if lock_val >= 0:  # is a door
-                    ceil_h = sector_ceilings[sec_id]
-                    if ceil_h > 16.0:  # door is raised / opened
+                    floor_h = (
+                        float(sector_floors[sec_id])
+                        if isinstance(sector_floors, np.ndarray)
+                        else 0.0
+                    )
+                    opening = float(sector_ceilings[sec_id]) - floor_h
+                    if opening > 16.0:  # door is raised / opened
                         if sec_id not in self.open_doors:
                             self.open_doors.add(sec_id)
                             breakdown.door += self.config.door_reward
@@ -219,8 +226,12 @@ class ExtrinsicRewardShaper:
         if target_coords is not None:
             dist_to_target = math.hypot(curr_x - target_coords[0], curr_y - target_coords[1])
             curr_potential = -dist_to_target / 1000.0
-            if self.last_potential != 0.0:
+            if self.last_potential is not None and self.last_target_coords == target_coords:
                 breakdown.potential = self.config.gamma * curr_potential - self.last_potential
             self.last_potential = curr_potential
+            self.last_target_coords = target_coords
+        else:
+            self.last_potential = None
+            self.last_target_coords = None
 
         return breakdown.total, breakdown

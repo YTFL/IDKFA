@@ -64,7 +64,8 @@ class EMLRPConfig:
     head_hidden_dim: int = 256
 
     # Motion scaling for dead-reckoning prior (per FRAME_SKIP=4 step; vitals vel is /20.0)
-    nominal_turn_rad_per_step: float = 0.14
+    frame_skip: int = 4
+    nominal_turn_rad_per_step: float = 0.2454369260617026  # 14.0625 deg steady-state TURN_LEFT/RIGHT per 4 tics
     nominal_vel_scale: float = 20.0
 
 
