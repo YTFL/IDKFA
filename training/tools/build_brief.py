@@ -173,10 +173,7 @@ def build_html(eval_data: dict[str, Any] | None, ablation_data: dict[str, Any] |
     letter-spacing: 0.04em;
   }}
   .two-col {{
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 18px;
-    align-items: start;
+    display: block;
   }}
   h2 {{
     font-family: "Segoe UI", Arial, sans-serif;
