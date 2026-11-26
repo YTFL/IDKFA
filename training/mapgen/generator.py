@@ -158,6 +158,14 @@ class ProceduralMapGenerator:
             m.add_thing(64.0 + room_size / 2 + 32, 64.0 + room_size / 2, THING_CLIP)
             m.add_thing(128.0, 64.0 + room_size - 96.0, THING_MEDIKIT)
 
+        m.metadata = {
+            "family": MapFamily.FAMILY_A.value,
+            "start_xy": (128.0, 128.0),
+            "exit_xy": None,
+            "key_xy": None,
+            "key_color": None,
+            "num_enemies": enemy_count,
+        }
         return m, True
 
     # -------------------------------------------------------------------------
@@ -690,6 +698,7 @@ class ProceduralMapGenerator:
 
             if room.is_start:
                 m.add_thing(cx, cy, THING_PLAYER1, angle=0)
+                m.metadata["start_xy"] = (float(cx), float(cy))
 
             if room.is_exit:
                 # Two-sided walkover exit cross at the center of the exit room
@@ -706,6 +715,7 @@ class ProceduralMapGenerator:
                     ve3, ve4, sidefront=sd_exit, sideback=sd_exit, twosided=True,
                     blocking=False, special=SPECIAL_EXIT_NORMAL, playercross=True,
                 )
+                m.metadata["exit_xy"] = (float(cx), float(cy))
 
             # Keycard
             if room.key:
@@ -716,7 +726,10 @@ class ProceduralMapGenerator:
                     if room.key == LOCK_BLUE
                     else THING_YELLOW_CARD
                 )
-                m.add_thing(cx + 40, cy + 40, ktype)
+                kx, ky = float(cx + 40), float(cy + 40)
+                m.add_thing(kx, ky, ktype)
+                m.metadata["key_xy"] = (kx, ky)
+                m.metadata["key_color"] = int(room.key)
 
             # Enemies
             for i, etype in enumerate(room.enemies):

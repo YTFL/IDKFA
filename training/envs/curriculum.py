@@ -335,6 +335,7 @@ class CurriculumManager:
         self.generator = ProceduralMapGenerator()
         self.history: collections.deque[bool] = collections.deque(maxlen=self.window_size)
         self.total_episodes: int = 0
+        self._last_map_metadata: dict[str, Any] = {}
 
     def record_episode(self, success: bool) -> None:
         self.history.append(success)
@@ -402,7 +403,53 @@ class CurriculumManager:
             raise RuntimeError(f"Could not generate solvable map for {stage.name}")
 
         m.write_wad(map_path)
+        self._last_map_metadata = dict(getattr(m, "metadata", {}))
         return map_path
+
+    def sample_map_spec(
+        self,
+        stage: CurriculumStage | None = None,
+        seed: int | None = None,
+        filename: str | None = None,
+    ) -> tuple[Path, CurriculumConfig, dict[str, Any]]:
+        """Sample a stage, write a verified-solvable WAD, and return `(path, cfg, metadata)`."""
+        active_stage = stage if stage is not None else self.sample_stage_for_episode()
+        cur_seed = seed if seed is not None else int(np.random.randint(1_000_000))
+        st_cfg = self.stage_configs[active_stage]
+        map_path = (
+            self.map_cache_dir / filename
+            if filename is not None
+            else self.map_cache_dir / f"stage_{active_stage.value}_{cur_seed}.wad"
+        )
+
+        family_by_stage = {
+            CurriculumStage.STAGE_0_AIM_SHOOT: MapFamily.FAMILY_A,
+            CurriculumStage.STAGE_1_COMBAT_ARENA: MapFamily.FAMILY_A,
+            CurriculumStage.STAGE_2_NAV_AUTO_DOORS: MapFamily.FAMILY_B,
+            CurriculumStage.STAGE_3_NAV_DOORS_ENEMIES: MapFamily.FAMILY_B,
+            CurriculumStage.STAGE_4_KEYCARD_PUZZLE: MapFamily.FAMILY_C,
+            CurriculumStage.STAGE_5_FULL_GAUNTLET: MapFamily.FAMILY_D,
+        }
+        family = family_by_stage.get(active_stage, MapFamily.FAMILY_D)
+
+        solvable = False
+        m = None
+        for attempt in range(20):
+            gen = ProceduralMapGenerator(cur_seed + attempt)
+            m, solvable = gen.generate(
+                family,
+                num_rooms=st_cfg.num_rooms,
+                difficulty=st_cfg.difficulty,
+            )
+            if solvable:
+                break
+        if m is None or not solvable:
+            raise RuntimeError(f"Could not generate solvable map for {active_stage.name}")
+
+        m.write_wad(map_path)
+        meta = dict(getattr(m, "metadata", {}))
+        self._last_map_metadata = meta
+        return map_path, st_cfg, meta
 
     def make_curriculum_env(
         self,

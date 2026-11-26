@@ -93,9 +93,20 @@ class ProcessedObservation:
 class ObservationPreprocessor:
     """End-to-end observation preprocessor."""
 
-    def __init__(self, normalize_vitals: bool = True):
+    def __init__(self, normalize_vitals: bool = True, use_depth: bool = True):
         self.normalize_vitals = normalize_vitals
+        self.use_depth = use_depth
         self.prev_action = np.zeros(ACTION_DIM, dtype=np.float32)
+
+    def to_config(self) -> dict[str, Any]:
+        return {"normalize_vitals": self.normalize_vitals, "use_depth": self.use_depth}
+
+    @classmethod
+    def from_config(cls, config: Mapping[str, Any]) -> ObservationPreprocessor:
+        return cls(
+            normalize_vitals=bool(config.get("normalize_vitals", True)),
+            use_depth=bool(config.get("use_depth", True)),
+        )
 
     def reset(self) -> None:
         """Reset episodic state (e.g. previous action buffer)."""
@@ -124,7 +135,7 @@ class ObservationPreprocessor:
         rays_feat = np.column_stack([rays_dist, rays_log, hit_one_hot]).astype(np.float32)
 
         # 2. Process Depth Buffer: downsample to (32,)
-        depth_raw = obs.get("depth")
+        depth_raw = obs.get("depth") if self.use_depth else None
         if depth_raw is not None:
             depth_arr = np.nan_to_num(depth_raw, nan=0.0)
             if depth_arr.ndim == 2 and depth_arr.shape[0] >= 90 and depth_arr.shape[1] >= DEPTH_DOWN_WIDTH:

@@ -1,0 +1,52 @@
+# Fast CUDA/CPU smoke configuration for Phase 5 verification
+
+train:
+  run_name: ppo_smoke
+  device: auto
+  seed: 42
+  total_steps: 512
+  eval_interval_updates: 2
+  save_interval_updates: 2
+  eval_maps_per_tier: 1
+
+env:
+  num_envs: 4
+  use_subproc: false
+  initial_stage: 0
+  episode_ticks: 400
+  render_buffers: true
+  use_depth: true
+  use_episodic_novelty: true
+  sticky_action_prob: 0.05
+  potential_scale: 1.0
+  dataset_manifest: maps/dataset/manifest.json
+  dataset_mix_prob: 0.25
+
+ppo:
+  rollout_len: 32
+  seq_len: 16
+  minibatch_seqs: 4
+  ppo_epochs: 2
+  gamma: 0.995
+  gamma_int: 0.99
+  gae_lambda: 0.95
+  clip_eps: 0.2
+  value_clip_eps: 0.2
+  vf_ext_coef: 0.5
+  vf_int_coef: 0.25
+  entropy_coef_start: 0.01
+  entropy_coef_end: 0.002
+  intrinsic_coef_start: 0.2
+  intrinsic_coef_end: 0.05
+  aux_coef: 0.1
+  lr: 0.0003
+  lr_end: 0.00003
+  max_grad_norm: 0.5
+  target_kl: 0.03
+  entity_dropout_prob: 0.05
+  obs_noise_std: 0.01
+
+rnd:
+  emb_dim: 128
+  lr: 0.0001
+  scale: 0.1
