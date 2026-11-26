@@ -124,31 +124,30 @@ def build_html(eval_data: dict[str, Any] | None, ablation_data: dict[str, Any] |
 <meta charset="utf-8" />
 <title>Nordlicht (EMLRP) — Research Paper &amp; Technical Brief</title>
 <style>
-  @page {{ size: letter; margin: 0.45in; }}
+  @page {{ size: letter; margin: 0.55in; }}
   * {{ box-sizing: border-box; }}
   body {{
     font-family: "Georgia", "Times New Roman", serif;
     color: #111827;
     margin: 0;
     padding: 0;
-    font-size: 9.4pt;
-    line-height: 1.38;
+    font-size: 10pt;
+    line-height: 1.5;
   }}
   .page {{ page-break-after: always; }}
   .page:last-child {{ page-break-after: auto; }}
   .paper-header {{
     text-align: center;
     border-bottom: 1.5px solid #1e293b;
-    padding-bottom: 9px;
-    margin-bottom: 11px;
+    padding-bottom: 10px;
+    margin-bottom: 14px;
   }}
   .paper-title {{
-    font-size: 16.5pt;
+    font-size: 16pt;
     font-weight: 700;
-    letter-spacing: -0.01em;
     color: #0f172a;
-    margin: 0 0 4px 0;
-    line-height: 1.18;
+    margin: 0 0 5px 0;
+    line-height: 1.22;
   }}
   .paper-authors {{
     font-size: 9.5pt;
@@ -157,15 +156,15 @@ def build_html(eval_data: dict[str, Any] | None, ablation_data: dict[str, Any] |
   }}
   .paper-meta {{
     font-family: "Segoe UI", Arial, sans-serif;
-    font-size: 7.8pt;
+    font-size: 8pt;
     color: #475569;
   }}
   .abstract-box {{
     background: #f8fafc;
     border-left: 3px solid #0f172a;
-    padding: 7px 10px;
-    margin-bottom: 11px;
-    font-size: 8.9pt;
+    padding: 9px 12px;
+    margin-bottom: 14px;
+    font-size: 9.5pt;
   }}
   .abstract-box strong {{
     font-family: "Segoe UI", Arial, sans-serif;
@@ -176,66 +175,59 @@ def build_html(eval_data: dict[str, Any] | None, ablation_data: dict[str, Any] |
   .two-col {{
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 14px;
+    gap: 18px;
     align-items: start;
   }}
   h2 {{
     font-family: "Segoe UI", Arial, sans-serif;
-    font-size: 9.6pt;
+    font-size: 9.8pt;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.04em;
     color: #0f172a;
     border-bottom: 1px solid #cbd5e1;
-    padding-bottom: 2px;
-    margin: 8px 0 5px 0;
+    padding-bottom: 3px;
+    margin: 12px 0 7px 0;
   }}
-  h3 {{
-    font-family: "Segoe UI", Arial, sans-serif;
-    font-size: 8.8pt;
-    font-weight: 700;
-    color: #1e293b;
-    margin: 6px 0 3px 0;
-  }}
-  p {{ margin: 0 0 6px 0; text-align: justify; }}
-  ul {{ margin: 2px 0 6px 0; padding-left: 15px; }}
-  li {{ margin-bottom: 3px; }}
+  p {{ margin: 0 0 8px 0; text-align: left; }}
+  ul {{ margin: 4px 0 8px 0; padding-left: 16px; }}
+  li {{ margin-bottom: 5px; }}
   .figure {{
     border: 1px solid #cbd5e1;
     border-radius: 4px;
     background: #ffffff;
-    padding: 6px 8px;
-    margin: 6px 0 8px 0;
+    padding: 8px 10px;
+    margin: 10px 0;
   }}
   .caption {{
     font-family: "Segoe UI", Arial, sans-serif;
-    font-size: 7.8pt;
+    font-size: 8pt;
     color: #475569;
-    margin-top: 4px;
-    line-height: 1.25;
+    margin-top: 5px;
+    line-height: 1.3;
   }}
   .kpi-row {{
     display: grid;
     grid-template-columns: repeat(4, 1fr);
-    gap: 8px;
-    margin: 6px 0 10px 0;
+    gap: 10px;
+    margin: 8px 0 14px 0;
   }}
   .kpi {{
     border: 1px solid #cbd5e1;
     border-radius: 4px;
-    padding: 5px 7px;
+    padding: 7px 8px;
     background: #f8fafc;
     text-align: center;
   }}
   .kpi .v {{
     font-family: "Segoe UI", Arial, sans-serif;
-    font-size: 11.5pt;
+    font-size: 12pt;
     font-weight: 700;
     color: #0f172a;
   }}
   .kpi .l {{
     font-family: "Segoe UI", Arial, sans-serif;
-    font-size: 7pt;
+    font-size: 7.2pt;
     color: #64748b;
     text-transform: uppercase;
   }}
@@ -243,12 +235,12 @@ def build_html(eval_data: dict[str, Any] | None, ablation_data: dict[str, Any] |
     width: 100%;
     border-collapse: collapse;
     font-family: "Segoe UI", Arial, sans-serif;
-    font-size: 7.9pt;
-    margin-top: 4px;
+    font-size: 8.2pt;
+    margin-top: 6px;
   }}
   th, td {{
     border-bottom: 1px solid #e2e8f0;
-    padding: 3.5px 4px;
+    padding: 4.5px 5px;
     text-align: left;
   }}
   th {{
@@ -260,17 +252,17 @@ def build_html(eval_data: dict[str, Any] | None, ablation_data: dict[str, Any] |
   }}
   code {{
     font-family: Consolas, monospace;
-    font-size: 7.8pt;
+    font-size: 8pt;
     background: #f1f5f9;
     padding: 0 3px;
     border-radius: 2px;
   }}
   .footer-note {{
-    margin-top: 8px;
-    padding-top: 5px;
+    margin-top: 12px;
+    padding-top: 6px;
     border-top: 1px solid #cbd5e1;
     font-family: "Segoe UI", Arial, sans-serif;
-    font-size: 7.5pt;
+    font-size: 7.8pt;
     color: #64748b;
     text-align: center;
   }}
@@ -279,70 +271,63 @@ def build_html(eval_data: dict[str, Any] | None, ablation_data: dict[str, Any] |
 <body>
   <div class="page">
     <div class="paper-header">
-      <div class="paper-title">Nordlicht: Egocentric Spatial Memory, Action Masking, and Imitation-to-RL for Zero-Shot 3D Navigation in DOOM</div>
+      <div class="paper-title">Nordlicht: Egocentric Spatial Memory &amp; Imitation-to-RL for Zero-Shot 3D Navigation</div>
       <div class="paper-authors">Nordlicht Project Technical Report &bull; DevForge Track 1 (ViZDoom)</div>
-      <div class="paper-meta">Policy: EMLRPPolicy ({params:,} params) &bull; Checkpoint: <code>{html.escape(ckpt_label)}</code> &bull; Contract: 1.0.0-draft</div>
+      <div class="paper-meta">Model: EMLRPPolicy ({params:,} params) &bull; Checkpoint: <code>{html.escape(ckpt_label)}</code></div>
     </div>
 
     <div class="abstract-box">
       <strong>Abstract — </strong>
-      Playing unseen 3D levels zero-shot requires an agent to fight enemies, conserve finite ammunition, open doors, collect keycards, and reach the exit without ever seeing the map layout beforehand. Standard reinforcement learning (RL) agents trained from scratch often fail on these multi-step tasks: they waste bullets shooting at walls, spin in circles to dodge fire, and stall in early combat rooms. We present <strong>Nordlicht (EMLRP)</strong>, a lightweight {params/1e6:.2f}M-parameter recurrent neural agent that builds a live top-down mental map of its surroundings, remembers important landmarks like keycards and locked doors, applies rule-compliant observation-based action masking, and bootstraps complex navigation skills via Behavioral Cloning (BC) before Proximal Policy Optimization (PPO) fine-tuning.
+      Playing unseen 3D DOOM levels requires fighting enemies, conserving finite ammo, opening doors, finding keycards, and reaching the exit without prior map knowledge. Standard RL agents often waste bullets on walls or spin in circles. <strong>Nordlicht</strong> solves this with a compact {params/1e6:.2f}M-parameter neural agent that builds a live mental map, remembers key landmarks, masks invalid actions, and learns core skills via Behavioral Cloning (BC) before PPO fine-tuning.
     </div>
 
     <div class="two-col">
       <div>
-        <h2>1. Introduction (Plain-Language Overview)</h2>
-        <p>Unlike chess or board games, a first-person 3D game only shows what is directly in front of the player. To solve an unseen level, an AI agent must solve four everyday problems at the same time: <em>Where am I?</em>, <em>Where have I already looked?</em>, <em>What matters in this room?</em>, and <em>When should I pull the trigger or press a door switch?</em></p>
-        <p>Nordlicht answers these questions using pure neural networks running on a single CPU thread in under 15 ms per step, with zero hardcoded pathfinding (no A* or Dijkstra) and zero aimbots at evaluation time.</p>
+        <h2>1. The Challenge</h2>
+        <p>In a first-person 3D world, the agent only sees what is directly ahead. To clear an unseen level, it must track where it has been, remember where locked doors or keycards are, and decide when to shoot or press a switch—all without hardcoded pathfinding or aimbots.</p>
 
-        <h2>2. EMLRP Neural Architecture</h2>
-        <p>At each step (every 4 game ticks), the agent reads 64 distance rays, a downsampled depth strip, up to 32 visible objects/enemies, its own health/ammo/keycard vitals, and its previous action:</p>
+        <h2>2. How Nordlicht Works (EMLRP)</h2>
         <ul>
-          <li><strong>Ray &amp; Entity Encoders:</strong> Summarize walls, doors, enemies, and pickups in the current field of view.</li>
-          <li><strong>Egocentric Spatial Map:</strong> Estimates how far the agent moved/turned, rotates its 2D mental grid (<code>24&times;24</code>), and writes new wall/door observations into memory.</li>
-          <li><strong>Landmark Slot Memory:</strong> Stores up to 8 key objects (keycards, locked doors) in relative coordinates so the agent can backtrack after picking up a key.</li>
-          <li><strong>Recurrent Core &amp; Mode Head:</strong> A 256-unit GRU combines current sight and memory, while a 5-way latent mode head shifts behavior between combat, exploration, and keycard hunting.</li>
+          <li><strong>Sight:</strong> Reads 64 distance rays, depth, visible enemies/items, and health/ammo vitals.</li>
+          <li><strong>Mental Map:</strong> Updates a live <code>24&times;24</code> top-down map as the agent moves and turns.</li>
+          <li><strong>Landmark Memory:</strong> Stores up to 8 key objects (keycards, locked doors) for backtracking.</li>
+          <li><strong>Action Masking:</strong> Blocks empty-gun firing, door-spamming, and conflicting buttons (such as pressing forward and backward together).</li>
         </ul>
       </div>
 
       <div>
-        <h2>3. Observation-Based Action Masking</h2>
-        <p>In ViZDoom, actions are 9 independent binary buttons (<code>MultiBinary(9)</code>). Without structure, an unmasked agent can hold forward and backward simultaneously, spam edge-triggered <code>USE</code> (reversing moving doors), or punch empty air forever after running out of ammo.</p>
-        <p>We introduce a shared observation-only mask (<code>submission/action_mask.py</code>) used identically during training and evaluation:</p>
+        <h2>3. Two-Stage Training</h2>
+        <p>Training purely from scratch caused the agent to stall in early combat rooms. Instead, we train in two stages:</p>
         <ul>
-          <li><strong>Targeted Combat:</strong> <code>ATTACK</code> is allowed only when an enemy or close barrel is in front (or within melee range if out of ammo).</li>
-          <li><strong>Crisp Edge Triggers:</strong> <code>USE</code> and <code>SELECT_NEXT_WEAPON</code> enforce <code>0 &rarr; 1</code> release and only fire near doors/switches or empty magazines with reserves.</li>
-          <li><strong>Factored Opposing Axes:</strong> Forward/backward, left/right, and turn-left/turn-right are sampled conditionally so opposing keys never cancel out while PPO probabilities remain exact.</li>
+          <li><strong>1. Behavioral Cloning (BC):</strong> A training-only teacher solves arenas, doors, and keycard puzzles, teaching the neural network clean movement and aiming.</li>
+          <li><strong>2. PPO Fine-Tuning:</strong> The agent practices across all difficulty stages with anti-spin and ammo-waste penalties so it refines combat and exploration without forgetting navigation.</li>
         </ul>
 
         <div class="figure">
-          <svg viewBox="0 0 430 132" width="100%" height="124">
-            <rect x="6" y="10" width="96" height="44" rx="4" fill="#eff6ff" stroke="#1d4ed8"/>
-            <text x="54" y="29" text-anchor="middle" font-size="8.5" font-weight="bold" fill="#1e3a8a">Sensory Inputs</text>
-            <text x="54" y="42" text-anchor="middle" font-size="7.2" fill="#334155">64 Rays, Entities, Depth</text>
+          <svg viewBox="0 0 430 105" width="100%" height="98">
+            <rect x="6" y="12" width="96" height="40" rx="4" fill="#eff6ff" stroke="#1d4ed8"/>
+            <text x="54" y="30" text-anchor="middle" font-size="8.5" font-weight="bold" fill="#1e3a8a">Sensory Inputs</text>
+            <text x="54" y="42" text-anchor="middle" font-size="7.2" fill="#334155">Rays, Entities, Vitals</text>
 
-            <rect x="122" y="10" width="110" height="44" rx="4" fill="#f0fdf4" stroke="#15803d"/>
-            <text x="177" y="29" text-anchor="middle" font-size="8.5" font-weight="bold" fill="#14532d">Spatial &amp; Landmark</text>
-            <text x="177" y="42" text-anchor="middle" font-size="7.2" fill="#334155">24x24 Ego-Map + 8 Slots</text>
+            <rect x="122" y="12" width="110" height="40" rx="4" fill="#f0fdf4" stroke="#15803d"/>
+            <text x="177" y="30" text-anchor="middle" font-size="8.5" font-weight="bold" fill="#14532d">Spatial Memory</text>
+            <text x="177" y="42" text-anchor="middle" font-size="7.2" fill="#334155">Ego-Map + Landmarks</text>
 
-            <rect x="252" y="10" width="80" height="44" rx="4" fill="#fefce8" stroke="#a16207"/>
-            <text x="292" y="29" text-anchor="middle" font-size="8.5" font-weight="bold" fill="#713f12">GRU + Mode</text>
-            <text x="292" y="42" text-anchor="middle" font-size="7.2" fill="#334155">256-d Memory</text>
+            <rect x="252" y="12" width="80" height="40" rx="4" fill="#fefce8" stroke="#a16207"/>
+            <text x="292" y="30" text-anchor="middle" font-size="8.5" font-weight="bold" fill="#713f12">GRU Core</text>
+            <text x="292" y="42" text-anchor="middle" font-size="7.2" fill="#334155">256-d State</text>
 
-            <rect x="348" y="10" width="76" height="44" rx="4" fill="#fdf2f8" stroke="#be185d"/>
-            <text x="386" y="29" text-anchor="middle" font-size="8.5" font-weight="bold" fill="#831843">Action Mask</text>
-            <text x="386" y="42" text-anchor="middle" font-size="7.2" fill="#334155">Factored 9-bit</text>
+            <rect x="348" y="12" width="76" height="40" rx="4" fill="#fdf2f8" stroke="#be185d"/>
+            <text x="386" y="30" text-anchor="middle" font-size="8.5" font-weight="bold" fill="#831843">Action Mask</text>
+            <text x="386" y="42" text-anchor="middle" font-size="7.2" fill="#334155">9-bit Output</text>
 
             <line x1="102" y1="32" x2="122" y2="32" stroke="#475569" stroke-width="1.4"/>
             <line x1="232" y1="32" x2="252" y2="32" stroke="#475569" stroke-width="1.4"/>
             <line x1="332" y1="32" x2="348" y2="32" stroke="#475569" stroke-width="1.4"/>
 
-            <rect x="6" y="74" width="418" height="46" rx="4" fill="#f8fafc" stroke="#94a3b8"/>
-            <text x="215" y="92" text-anchor="middle" font-size="8.5" font-weight="bold" fill="#0f172a">Two-Stage Training Pipeline (Training-Only Scaffolding)</text>
-            <text x="215" y="107" text-anchor="middle" font-size="7.5" fill="#334155">Stage A: Privileged BFS Teacher Demos &rarr; Truncated-BPTT Behavioral Cloning (BC)</text>
-            <text x="215" y="116" text-anchor="middle" font-size="7.5" fill="#334155">Stage B: Mixed-Stage PPO Fine-Tuning (Critic Warm-Up + BC KL Anchor + Anti-Spin Shaping)</text>
+            <text x="215" y="78" text-anchor="middle" font-size="8" font-weight="bold" fill="#0f172a">Teacher Demos &rarr; BC Pretraining &rarr; Masked PPO Fine-Tuning</text>
           </svg>
-          <div class="caption"><strong>Figure 1:</strong> End-to-end EMLRP inference flow (top) and training pipeline (bottom).</div>
+          <div class="caption"><strong>Figure 1:</strong> Inference pipeline (top) and two-stage training flow (bottom).</div>
         </div>
       </div>
     </div>
@@ -351,59 +336,37 @@ def build_html(eval_data: dict[str, Any] | None, ablation_data: dict[str, Any] |
   </div>
 
   <div class="page">
-    <h2>4. Behavioral Cloning &rarr; PPO Fine-Tuning &amp; Reward Shaping</h2>
-    <div class="two-col">
-      <div>
-        <p>Pure RL from random weights struggled to escape early combat rooms, stalling in Stage 1 without ever practicing doors or keycards. To solve this, we combine <strong>Behavioral Cloning (BC)</strong> with <strong>PPO fine-tuning</strong>:</p>
-        <ul>
-          <li><strong>Training-Only Teacher Oracle:</strong> Solves procedural arenas, door corridors, and keycard puzzles via room-graph BFS and ray avoidance, recording clean masked demonstrations.</li>
-          <li><strong>Truncated-BPTT BC Pretraining:</strong> Trains action logits, auxiliary perception heads (next-ray prediction, landmark direction, combat flags), and the value critic over sequential 32-step chunks.</li>
-          <li><strong>Safe PPO Fine-Tuning:</strong> Starts directly across Stages 0–5 with 20 critic warm-up updates (freezing actor weights until value estimates calibrate) and a decaying BC KL anchor.</li>
-        </ul>
-      </div>
-      <div>
-        <h3>Anti-Exploit Extrinsic Reward Shaping</h3>
-        <p>To prevent wall-sliding, spinning in circles, and blind ammo waste during RL fine-tuning, <code>ExtrinsicRewardShaper</code> adds targeted penalties alongside exit, keycard, door, and exploration rewards:</p>
-        <ul>
-          <li><strong>Dry-Fire &amp; Wall-Spray Penalties:</strong> Penalizes empty-weapon triggers (<code>-0.08</code>) and un-targeted ammo loss (<code>-0.03</code>).</li>
-          <li><strong>Spin-Loop &amp; Wall-Hug Detection:</strong> Penalizes pressing against close walls (<code>-0.03</code>), 48-step stagnation (<code>-0.05</code>), and turning &ge;300&deg; in place over 32 steps without net travel.</li>
-          <li><strong>Action Hygiene:</strong> Penalizes held consecutive <code>USE</code> presses (<code>-0.04</code>) and conflicting button pairs (<code>-0.02</code>).</li>
-        </ul>
-      </div>
-    </div>
-
-    <h2>5. Quantitative Evaluation &amp; Ablation Analysis</h2>
+    <h2>4. Evaluation &amp; Ablation Results</h2>
     <div class="kpi-row">
       <div class="kpi"><div class="v">{w_score:.2f} &plusmn; {w_std:.2f}</div><div class="l">Weighted Val Score</div></div>
       <div class="kpi"><div class="v">{mean_ms:.2f} ms</div><div class="l">Mean Step Latency</div></div>
       <div class="kpi"><div class="v">{p99_ms:.2f} ms</div><div class="l">p99 Step Latency</div></div>
-      <div class="kpi"><div class="v">{params/1e6:.2f} M</div><div class="l">Model Parameters</div></div>
+      <div class="kpi"><div class="v">{params/1e6:.2f} M</div><div class="l">Parameters</div></div>
     </div>
 
     <div class="two-col">
       <div>
-        <h3>Held-Out Validation Tiers</h3>
+        <h2>Held-Out Validation Tiers</h2>
         <table>
           <thead><tr><th>Tier</th><th>Wt</th><th>Score</th><th>Exit</th><th>Surv</th><th>Kills</th><th>Cells</th></tr></thead>
           <tbody>{''.join(tier_rows)}</tbody>
         </table>
-        <h3>Unseen Classic Map Generalization</h3>
+        <h2>Unseen Classic Maps</h2>
         <table>
           <thead><tr><th>Map</th><th>Outcome</th><th>Score</th><th>Kills</th><th>Cells</th></tr></thead>
           <tbody>{''.join(classic_rows)}</tbody>
         </table>
       </div>
       <div>
-        <h3>Module Knockout Ablations (Delta vs. Baseline)</h3>
+        <h2>Module Ablations</h2>
         <div class="figure">
           {abl_svg}
-          <div class="caption"><strong>Figure 2:</strong> Score change when disabling each memory/perception module at inference.</div>
+          <div class="caption"><strong>Figure 2:</strong> Weighted score change when each module is disabled at inference.</div>
         </div>
-        <h3>Contract &amp; Safety Verification</h3>
+        <h2>Compliance &amp; Speed</h2>
         <ul>
-          <li><strong>Strict Isolation:</strong> Static AST checks confirm zero <code>vizdoom</code>, <code>privileged_state</code>, or <code>training</code> imports inside <code>submission/</code>.</li>
-          <li><strong>Real-Time Budget:</strong> Single-thread CPU inference averages {mean_ms:.2f} ms/step (well under the 40 ms/step limit).</li>
-          <li><strong>Zero Train/Serve Skew:</strong> Identical <code>ObservationPreprocessor</code> and <code>action_mask.py</code> run in both training and evaluation.</li>
+          <li><strong>Pure Neural Inference:</strong> Zero <code>vizdoom</code>, <code>privileged_state</code>, or pathfinding imports in <code>submission/</code>.</li>
+          <li><strong>Real-Time CPU:</strong> Runs in {mean_ms:.2f} ms/step on 1 CPU thread (budget: 40 ms/step).</li>
         </ul>
       </div>
     </div>
