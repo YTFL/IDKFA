@@ -14,12 +14,14 @@ Works in dual mode:
 from __future__ import annotations
 
 import math
+import os
 from typing import Any, Mapping, Sequence
 
 import numpy as np
 import pygame
 
 from doom_env import spaces as S
+from training.tools.demo_replay import spatial_map_to_rgb
 
 # Dashboard Canvas Dimensions
 CANVAS_WIDTH = 1200
@@ -54,7 +56,7 @@ class DoomDashboard:
         self.height = CANVAS_HEIGHT
         self.headless = headless
 
-        import os
+        self._prev_sdl_driver = os.environ.get("SDL_VIDEODRIVER")
         if self.headless:
             os.environ["SDL_VIDEODRIVER"] = "dummy"
         elif "SDL_VIDEODRIVER" in os.environ:
@@ -90,9 +92,11 @@ class DoomDashboard:
         reward_breakdown: Mapping[str, float] | None = None,
         step_latency_ms: float = 0.0,
         decision_mode: str = "EXPLORE",
+        spatial_map: np.ndarray | None = None,
+        active_slots: int | None = None,
     ) -> np.ndarray:
         """Renders composite telemetry dashboard.
-        
+
         Returns an RGB numpy array (CANVAS_HEIGHT, CANVAS_WIDTH, 3).
         """
         self.surface.fill(COLOR_BG)
@@ -123,16 +127,21 @@ class DoomDashboard:
         # 2. Bottom-Left: 360° LiDAR Raycast Radar & Visible Entities
         # -------------------------------------------------------------
         radar_rect = pygame.Rect(16, 448, 560, 236)
-        self._draw_panel(radar_rect, "360° SENSORY RADAR & THREAT TRACKER")
+        self._draw_panel(radar_rect, "360° SENSORY RADAR & EMLRP MEMORY")
         self._draw_radar(
-            center_x=radar_rect.x + 130,
+            center_x=radar_rect.x + 122,
             center_y=radar_rect.y + 130,
-            radius=90,
+            radius=88,
             rays_dist=observation["rays"]["distance"],
             rays_hits=observation["rays"]["hit_type"],
             entities=observation.get("visible_entities"),
         )
-        self._draw_radar_legend(radar_rect.x + 250, radar_rect.y + 35)
+        self._draw_radar_legend(
+            radar_rect.x + 236,
+            radar_rect.y + 35,
+            spatial_map=spatial_map,
+            active_slots=active_slots,
+        )
 
         # -------------------------------------------------------------
         # 3. Top-Right: Action Probabilities (Policy Confidence Bars)
@@ -203,7 +212,10 @@ class DoomDashboard:
             dir_x = -math.sin(angle_rad)
             dir_y = -math.cos(angle_rad)
 
-            hit_dist = float(rays_dist[i]) * radius
+            raw_d = float(rays_dist[i])
+            if not math.isfinite(raw_d):
+                raw_d = 1.0
+            hit_dist = max(0.0, min(1.0, raw_d)) * radius
             hit_type = int(rays_hits[i])
             color = RAY_COLORS.get(hit_type, (80, 80, 80))
 
@@ -224,12 +236,14 @@ class DoomDashboard:
             for idx in range(len(mask)):
                 if not mask[idx]:
                     continue
-                d_norm, sin_a, cos_a = feats[idx][:3]
-                ent_dist = min(radius, float(d_norm) * radius)
+                raw_dist, raw_sin, raw_cos = feats[idx][:3]
+                if not (math.isfinite(float(raw_dist)) and math.isfinite(float(raw_sin)) and math.isfinite(float(raw_cos))):
+                    continue
+                ent_dist = max(0.0, min(float(radius), float(raw_dist) * radius))
                 # Angle relative to forward heading
-                ex = int(center_x - sin_a * ent_dist)
-                ey = int(center_y - cos_a * ent_dist)
-                etype = types[idx]
+                ex = int(center_x - float(raw_sin) * ent_dist)
+                ey = int(center_y - float(raw_cos) * ent_dist)
+                etype = int(types[idx])
                 ecolor = COLOR_RED if etype in (1, 2, 3, 4) else COLOR_GREEN
                 pygame.draw.circle(self.surface, ecolor, (ex, ey), 5)
                 pygame.draw.circle(self.surface, (255, 255, 255), (ex, ey), 1)
@@ -242,23 +256,43 @@ class DoomDashboard:
             [(center_x, center_y - 8), (center_x - 4, center_y + 4), (center_x + 4, center_y + 4)],
         )
 
-    def _draw_radar_legend(self, x: int, y: int) -> None:
+    def _draw_radar_legend(
+        self,
+        x: int,
+        y: int,
+        spatial_map: np.ndarray | None = None,
+        active_slots: int | None = None,
+    ) -> None:
         items = [
             ("Wall / Obstacle", (110, 115, 130)),
             ("Door (Standard)", (60, 180, 240)),
-            ("Locked Door (Key Required)", (250, 190, 50)),
-            ("Hostile Monster / Threat", (240, 70, 70)),
-            ("Item / Health / Ammo", (80, 220, 120)),
+            ("Locked Door (Key)", (250, 190, 50)),
+            ("Hostile Monster", (240, 70, 70)),
+            ("Item / Pickup", (80, 220, 120)),
         ]
+        cur_y = y
         for name, color in items:
-            pygame.draw.circle(self.surface, color, (x + 6, y + 8), 5)
+            pygame.draw.circle(self.surface, color, (x + 6, cur_y + 8), 5)
             lbl = self.font_main.render(name, True, COLOR_TEXT)
-            self.surface.blit(lbl, (x + 20, y))
-            y += 24
+            self.surface.blit(lbl, (x + 18, cur_y))
+            cur_y += 23
 
-        # Heading indicator
-        lbl_fwd = self.font_small.render("▲ FOV (90° Straight Ahead)", True, COLOR_ACCENT)
-        self.surface.blit(lbl_fwd, (x + 20, y + 10))
+        lbl_fwd = self.font_small.render("▲ FOV (90° Ahead)", True, COLOR_ACCENT)
+        self.surface.blit(lbl_fwd, (x + 18, cur_y + 6))
+        if active_slots is not None:
+            slot_lbl = self.font_small.render(f"LANDMARK SLOTS: {active_slots}/16", True, COLOR_YELLOW)
+            self.surface.blit(slot_lbl, (x + 18, cur_y + 24))
+
+        if spatial_map is not None and spatial_map.ndim == 3:
+            smap_rgb = spatial_map_to_rgb(spatial_map, scale=3)  # (96, 96, 3)
+            smap_surf = pygame.surfarray.make_surface(np.transpose(smap_rgb, (1, 0, 2)))
+            thumb = pygame.transform.scale(smap_surf, (84, 84))
+            tx = x + 220
+            ty = y + 6
+            pygame.draw.rect(self.surface, COLOR_PANEL_BORDER, (tx - 2, ty - 2, 88, 88), width=1)
+            self.surface.blit(thumb, (tx, ty))
+            lbl_map = self.font_small.render("EGO MAP 32x32", True, COLOR_TEXT_DIM)
+            self.surface.blit(lbl_map, (tx - 2, ty + 90))
 
     def _draw_action_bars(
         self,
@@ -318,9 +352,9 @@ class DoomDashboard:
         x1 = rect.x + 14
         y1 = rect.y + 36
 
-        health = float(vitals[0]) if vitals[0] > 2.0 else float(vitals[0] * 100)
-        armor = float(vitals[1]) if vitals[1] > 2.0 else float(vitals[1] * 100)
-        ammo = float(vitals[3]) if vitals[3] > 5.0 else float(vitals[3] * 100)
+        health = float(vitals[0])
+        armor = float(vitals[1])
+        ammo = float(vitals[3])
 
         # Health & Armor gauges
         self._draw_metric_row(x1, y1, "HEALTH:", f"{int(health)} HP", COLOR_GREEN if health > 30 else COLOR_RED)
@@ -383,3 +417,7 @@ class DoomDashboard:
 
     def close(self) -> None:
         pygame.quit()
+        if self._prev_sdl_driver is None:
+            os.environ.pop("SDL_VIDEODRIVER", None)
+        else:
+            os.environ["SDL_VIDEODRIVER"] = self._prev_sdl_driver
