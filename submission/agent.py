@@ -157,6 +157,8 @@ class DoomAgent:
         self._last_safe_action[0] = 1  # MOVE_FORWARD fallback on transient error
         self._logged_errors: set[str] = set()
         self._rng: torch.Generator | None = None
+        self._last_action_logits: torch.Tensor | None = None
+        self._last_mode_logits: torch.Tensor | None = None
         self.state: EMLRPState = self.policy.init_state(1, device=self.exec_device)
 
         self._warmup()
@@ -280,6 +282,8 @@ class DoomAgent:
         self._prev_action.fill(0)
         self._last_safe_action.fill(0)
         self._last_safe_action[0] = 1
+        self._last_action_logits = None
+        self._last_mode_logits = None
         self.state = self.policy.init_state(1, device=self.exec_device)
         if self.temperature > 0.0:
             self._rng = torch.Generator(device=self.exec_device)
@@ -295,6 +299,24 @@ class DoomAgent:
         action = np.asarray(action != 0, dtype=np.int8).reshape(self._action_dim)
         return action
 
+    def get_last_telemetry(self) -> dict[str, Any]:
+        """Return neural action probabilities, latent mode probs, and memory stats for dashboards."""
+        if self._last_action_logits is None:
+            action_probs = np.full(self._action_dim, 0.5, dtype=np.float32)
+        else:
+            scale = self.temperature if self.temperature > 0.0 else 1.0
+            action_probs = torch.sigmoid(self._last_action_logits / scale).detach().cpu().numpy()
+        if self._last_mode_logits is None:
+            mode_probs = np.full(self.policy.config.num_latent_modes, 1.0 / self.policy.config.num_latent_modes, dtype=np.float32)
+        else:
+            mode_probs = torch.softmax(self._last_mode_logits, dim=-1).detach().cpu().numpy()
+        return {
+            "action_probs": action_probs,
+            "mode_probs": mode_probs,
+            "spatial_map": self.state.spatial_map[0].detach().cpu().numpy(),
+            "active_landmark_slots": int((self.state.landmark_valid[0] > 0.05).sum().item()),
+        }
+
     def act(self, observation: dict) -> np.ndarray:
         """Run one neural forward step and return a valid MultiBinary(9) int8 array."""
         try:
@@ -306,6 +328,8 @@ class DoomAgent:
             with torch.inference_mode():
                 out = self.policy.step(obs_t, self.state, prev_act_t, compute_aux=False)
                 self.state = out.state
+                self._last_action_logits = out.action_logits[0]
+                self._last_mode_logits = out.mode_logits[0]
                 action = self._decode_action(out.action_logits[0])
             self._prev_action[:] = action
             self._last_safe_action[:] = action

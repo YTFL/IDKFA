@@ -6,8 +6,10 @@ import re
 from pathlib import Path
 
 from training.tools.build_brief import build_html, render_pdf
+from training.tools.dashboard import DoomDashboard
 from training.tools.demo_replay import run_demo, write_replay_html
 from training.tools.pre_submit_check import check_submission_compliance, run_checks
+from training.tools.record_demo import run_demo as run_dashboard_demo
 
 
 def test_submission_static_compliance_and_isolation() -> None:
@@ -78,3 +80,45 @@ def test_brief_pdf_renders_clean_two_pages(tmp_path: Path) -> None:
     assert raw.startswith(b"%PDF-")
     assert info["pages"] == 2, f"Expected 2-page PDF brief, got {info['pages']} pages"
     assert len(re.findall(rb"/Type\s*/Page(?!s)\b", raw)) == 2
+
+
+def test_dashboard_and_record_demo_headless(tmp_path: Path) -> None:
+    import numpy as np
+
+    dash = DoomDashboard(headless=True)
+    try:
+        obs = {
+            "rays": {"distance": np.full(64, 0.5, dtype=np.float32), "hit_type": np.ones(64, dtype=np.int64)},
+            "vitals": np.array([1.0, 2.0, 1.0, 4.0] + [0.0] * 13, dtype=np.float32),
+            "visible_entities": {
+                "features": np.full((32, 5), np.nan, dtype=np.float32),
+                "entity_type": np.zeros(32, dtype=np.int64),
+                "mask": np.zeros(32, dtype=np.int8),
+            },
+        }
+        frame = dash.render_frame(
+            rgb_frame=np.zeros((120, 160, 3), dtype=np.uint8),
+            observation=obs,
+            action_probs=np.full(9, 0.5, dtype=np.float32),
+            action_taken=np.zeros(9, dtype=np.int8),
+            reward_breakdown={"total": 0.1, "curiosity": 0.05},
+            step_latency_ms=8.1,
+            decision_mode="MODE_0 (50%)",
+            spatial_map=np.ones((16, 32, 32), dtype=np.float32),
+            active_slots=3,
+        )
+        assert frame.shape == (700, 1200, 3) and frame.dtype == np.uint8
+    finally:
+        dash.close()
+
+    out_html = tmp_path / "dash_replay.html"
+    res = run_dashboard_demo(
+        wad_path="maps/two_rooms.wad",
+        ticks=60,
+        window=False,
+        save_html=str(out_html),
+        stride=2,
+    )
+    assert res["steps"] > 0
+    assert out_html.is_file()
+    assert "data:image/png;base64," in out_html.read_text(encoding="utf-8")
