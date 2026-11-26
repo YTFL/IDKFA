@@ -38,6 +38,20 @@ def _resolve_device(device_arg: str) -> torch.device:
     return torch.device(device_arg)
 
 
+def _format_duration(seconds: float) -> str:
+    secs = max(0, int(round(seconds)))
+    days, rem = divmod(secs, 86400)
+    hours, rem = divmod(rem, 3600)
+    mins, secs = divmod(rem, 60)
+    if days > 0:
+        return f"{days}d {hours:02d}h {mins:02d}m"
+    if hours > 0:
+        return f"{hours}h {mins:02d}m"
+    if mins > 0:
+        return f"{mins}m {secs:02d}s"
+    return f"{secs}s"
+
+
 def _load_dataset_train_maps(manifest_path: str | Path | None) -> list[str]:
     if manifest_path is None:
         return []
@@ -168,6 +182,7 @@ def train(
         potential_scale=float(env_cfg.get("potential_scale", 1.0)),
         dataset_train_maps=dataset_train_maps,
         dataset_mix_prob=float(env_cfg.get("dataset_mix_prob", 0.25)),
+        map_reuse_episodes=int(env_cfg.get("map_reuse_episodes", 3)),
         seed=seed,
     )
 
@@ -203,7 +218,15 @@ def train(
     reset_mask = np.ones(num_envs, dtype=bool)
     recent_episodes: list[dict[str, Any]] = []
     csv_header_written = csv_path.exists()
+    csv_fieldnames: list[str] | None = None
+    if csv_header_written:
+        first_line = csv_path.read_text(encoding="utf-8").splitlines()[:1]
+        if first_line:
+            csv_fieldnames = first_line[0].split(",")
     last_metrics: dict[str, Any] = {}
+
+    session_start_step = global_step
+    t_session_start = time.perf_counter()
 
     if device.type == "cuda":
         torch.cuda.reset_peak_memory_stats(device)
@@ -275,8 +298,12 @@ def train(
             )
 
             ppo_stats = trainer.update(buffer, progress_frac=progress)
-            dt_up = time.perf_counter() - t_up
+            now = time.perf_counter()
+            dt_up = now - t_up
             fps = steps_per_update / max(1e-6, dt_up)
+            avg_fps = (global_step - session_start_step) / max(1e-6, now - t_session_start)
+            progress_pct = min(100.0, 100.0 * global_step / max(1, total_steps))
+            eta_s = max(0, total_steps - global_step) / max(1e-6, avg_fps)
 
             ep_slice = recent_episodes[-100:]
             mean_ep_ext = float(np.mean([e["total_ext_reward"] for e in ep_slice])) if ep_slice else 0.0
@@ -293,7 +320,10 @@ def train(
             row: dict[str, Any] = {
                 "update": update_idx,
                 "global_step": global_step,
+                "progress_pct": round(progress_pct, 2),
+                "eta_s": round(eta_s, 1),
                 "fps": round(fps, 1),
+                "avg_fps": round(avg_fps, 1),
                 "stage": int(curriculum.current_stage),
                 "curriculum_success_rate": round(curriculum.success_rate, 4),
                 "ep_success_rate": round(ep_success, 4),
@@ -344,10 +374,12 @@ def train(
                 fj.write(json.dumps(row) + "\n")
 
             with csv_path.open("a", newline="", encoding="utf-8") as fc:
-                writer = csv.DictWriter(fc, fieldnames=list(row.keys()))
+                fieldnames = csv_fieldnames or list(row.keys())
+                writer = csv.DictWriter(fc, fieldnames=fieldnames, extrasaction="ignore")
                 if not csv_header_written:
                     writer.writeheader()
                     csv_header_written = True
+                    csv_fieldnames = fieldnames
                 writer.writerow(row)
 
             if tb_writer is not None:
@@ -356,10 +388,13 @@ def train(
                         tb_writer.add_scalar(f"train/{k}", v, global_step)
 
             last_metrics = row
+            eta_str = _format_duration(eta_s)
             print(
-                f"[Upd {update_idx}/{total_updates} | Step {global_step}] "
-                f"FPS={row['fps']:.0f} Stage={row['stage']} Succ={row['ep_success_rate']:.1%} "
-                f"ExtR={row['ep_ext_reward']:.2f} Ent={row['entropy']:.2f} KL={row['approx_kl']:.4f} "
+                f"[Upd {update_idx}/{total_updates} ({progress_pct:.2f}%) | "
+                f"Step {global_step}/{total_steps} | ETA {eta_str}] "
+                f"FPS={row['fps']:.0f} (avg {row['avg_fps']:.0f}) Stage={row['stage']} "
+                f"Succ={row['ep_success_rate']:.1%} ExtR={row['ep_ext_reward']:.2f} "
+                f"Ent={row['entropy']:.2f} KL={row['approx_kl']:.4f} "
                 f"Aux={row['aux_loss']:.3f} VRAM={row['peak_vram_mb']:.0f}MB",
                 flush=True,
             )

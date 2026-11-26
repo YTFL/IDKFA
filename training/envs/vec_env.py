@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import math
 import multiprocessing as mp
+import os
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -52,6 +53,7 @@ class WorkerConfig:
     dataset_mix_prob: float = 0.25
     fixed_wad_path: str | None = None
     fixed_map_name: str = "MAP01"
+    map_reuse_episodes: int = 3
     seed: int = 42
     cache_root: str | None = None
 
@@ -135,49 +137,55 @@ class _SingleDoomWorker:
             self.env = None
 
     def _open_next_episode(self) -> ProcessedObservation:
-        self._close_env()
         self.ep_count += 1
         ep_seed = int(self.rng.integers(0, 2**30))
 
-        if self.cfg.fixed_wad_path is not None:
-            wad_path = Path(self.cfg.fixed_wad_path)
-            map_name = self.cfg.fixed_map_name
-            st_cfg = self.curriculum.stage_configs[self.curriculum.current_stage]
-            self.ep_stage = self.curriculum.current_stage
-            self.ep_meta = {}
-        else:
-            self.ep_stage = self.curriculum.sample_stage_for_episode()
-            use_dataset = (
-                bool(self.cfg.dataset_train_maps)
-                and self.ep_stage >= CurriculumStage.STAGE_3_NAV_DOORS_ENEMIES
-                and float(self.rng.random()) < self.cfg.dataset_mix_prob
-            )
-            if use_dataset and self.cfg.dataset_train_maps:
-                idx = int(self.rng.integers(0, len(self.cfg.dataset_train_maps)))
-                wad_path = Path(self.cfg.dataset_train_maps[idx])
-                map_name = "MAP01"
-                st_cfg = self.curriculum.stage_configs[self.ep_stage]
+        need_new_env = (
+            self.env is None
+            or self.ep_count == 1
+            or (self.cfg.fixed_wad_path is None and (self.ep_count - 1) % max(1, self.cfg.map_reuse_episodes) == 0)
+        )
+        if need_new_env:
+            self._close_env()
+            if self.cfg.fixed_wad_path is not None:
+                wad_path = Path(self.cfg.fixed_wad_path)
+                map_name = self.cfg.fixed_map_name
+                st_cfg = self.curriculum.stage_configs[self.curriculum.current_stage]
+                self.ep_stage = self.curriculum.current_stage
                 self.ep_meta = {}
             else:
-                slot = f"ep_slot_{self.ep_count % 2}.wad"
-                wad_path, st_cfg, meta = self.curriculum.sample_map_spec(
-                    self.ep_stage, seed=ep_seed, filename=slot
+                self.ep_stage = self.curriculum.sample_stage_for_episode()
+                use_dataset = (
+                    bool(self.cfg.dataset_train_maps)
+                    and self.ep_stage >= CurriculumStage.STAGE_3_NAV_DOORS_ENEMIES
+                    and float(self.rng.random()) < self.cfg.dataset_mix_prob
                 )
-                map_name = "MAP01"
-                self.ep_meta = meta
+                if use_dataset and self.cfg.dataset_train_maps:
+                    idx = int(self.rng.integers(0, len(self.cfg.dataset_train_maps)))
+                    wad_path = Path(self.cfg.dataset_train_maps[idx])
+                    map_name = "MAP01"
+                    st_cfg = self.curriculum.stage_configs[self.ep_stage]
+                    self.ep_meta = {}
+                else:
+                    slot = f"ep_slot_{self.ep_count % 2}.wad"
+                    wad_path, st_cfg, meta = self.curriculum.sample_map_spec(
+                        self.ep_stage, seed=ep_seed, filename=slot
+                    )
+                    map_name = "MAP01"
+                    self.ep_meta = meta
 
-        base_env = make_env(
-            str(wad_path),
-            map_name,
-            episode_ticks=self.cfg.episode_ticks,
-            render_buffers=self.cfg.render_buffers,
-        )
-        self.env = CurriculumEnvWrapper(
-            base_env,
-            stage=self.ep_stage,
-            reward_weights=self.curriculum.reward_weights,
-            config=st_cfg,
-        )
+            base_env = make_env(
+                str(wad_path),
+                map_name,
+                episode_ticks=self.cfg.episode_ticks,
+                render_buffers=self.cfg.render_buffers,
+            )
+            self.env = CurriculumEnvWrapper(
+                base_env,
+                stage=self.ep_stage,
+                reward_weights=self.curriculum.reward_weights,
+                config=st_cfg,
+            )
         raw_obs, _ = self.env.reset(seed=ep_seed)
 
         self.preprocessor.reset()
@@ -300,6 +308,10 @@ class _SingleDoomWorker:
 
 
 def _worker_loop(conn: Any, worker_id: int, cfg: WorkerConfig) -> None:
+    # Silence ViZDoom C++ startup logs at OS fd 1 inside background workers
+    devnull_fd = os.open(os.devnull, os.O_WRONLY)
+    os.dup2(devnull_fd, 1)
+    os.close(devnull_fd)
     worker = _SingleDoomWorker(worker_id, cfg)
     try:
         while True:
