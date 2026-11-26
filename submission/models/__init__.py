@@ -1,6 +1,6 @@
 """Neural policy architectures for Nordlicht."""
 
-from .adapter import processed_sequence_to_tensors, processed_to_tensors
+from .adapter import processed_sequence_to_tensors, processed_to_tensors, single_obs_to_tensors
 from .config import EMLRPConfig, EMLRPState, init_emlrp_state
 from .emlrp import EMLRPPolicy, EMLRPStepOutput
 from .entity_encoder import EntitySetEncoder
@@ -21,4 +21,5 @@ __all__ = [
     "init_emlrp_state",
     "processed_sequence_to_tensors",
     "processed_to_tensors",
+    "single_obs_to_tensors",
 ]

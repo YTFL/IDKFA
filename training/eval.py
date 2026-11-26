@@ -44,6 +44,7 @@ def score_episode(
     seed: int = 0,
     device: torch.device | str = "cpu",
     deterministic: bool = True,
+    temperature: float = 0.0,
 ) -> dict[str, Any]:
     """Run one deterministic/stochastic evaluation episode under vanilla rules."""
     include_depth = policy.config.depth_feat_dim > 0
@@ -80,10 +81,10 @@ def score_episode(
                 )
                 out = policy.step(obs_t, state, prev_act_t, done=done_t, compute_aux=False)
                 state = out.state
-                if deterministic:
+                if deterministic or temperature <= 0.0:
                     act_t = (out.action_logits[0] > 0.0).to(torch.int8)
                 else:
-                    act_t = Bernoulli(logits=out.action_logits[0]).sample().to(torch.int8)
+                    act_t = Bernoulli(logits=out.action_logits[0] / temperature).sample().to(torch.int8)
                 action = act_t.cpu().numpy()
                 latencies_ms.append((time.perf_counter() - t0) * 1000.0)
 
@@ -133,6 +134,7 @@ def evaluate_on_manifest(
     seed: int = 0,
     device: torch.device | str = "cpu",
     deterministic: bool = True,
+    temperature: float = 0.0,
 ) -> dict[str, Any]:
     """Evaluate across held-out validation maps and compute tier-weighted score."""
     m_path = Path(manifest_path)
@@ -161,6 +163,7 @@ def evaluate_on_manifest(
                 seed=seed + idx,
                 device=device,
                 deterministic=deterministic,
+                temperature=temperature,
             )
             ep_metrics.append(res)
             all_latencies.append(res["mean_ms"])
