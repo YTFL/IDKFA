@@ -40,8 +40,8 @@ class EMLRPConfig:
     turn_left_idx: int = 4
     turn_right_idx: int = 5
 
-    # Optional visual/depth feature input from Phase 2 encoder (0 = disabled if absent)
-    depth_feat_dim: int = 64
+    # Optional visual/depth feature input from Phase 2 encoder (DEPTH_DOWN_WIDTH = 32)
+    depth_feat_dim: int = 32
 
     # Recurrent core
     fusion_dim: int = 256
@@ -63,9 +63,9 @@ class EMLRPConfig:
     mode_embed_dim: int = 32
     head_hidden_dim: int = 256
 
-    # Motion scaling for dead-reckoning prior (per FRAME_SKIP=4 step)
+    # Motion scaling for dead-reckoning prior (per FRAME_SKIP=4 step; vitals vel is /20.0)
     nominal_turn_rad_per_step: float = 0.14
-    nominal_vel_scale: float = 1.0
+    nominal_vel_scale: float = 20.0
 
 
 @dataclass
