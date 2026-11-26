@@ -222,12 +222,8 @@ _vizdoom.ini
 
 # Local validator / scorer artifacts
 *.lmp
-
 # macOS
 .DS_Store
-
-# Local reference notes
-docs/contract_notes.md
 
 # Generated datasets, checkpoints and training logs
 maps/dataset/
