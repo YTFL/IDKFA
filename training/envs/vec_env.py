@@ -345,6 +345,7 @@ class DummyVecEnv:
             self._owned_cache_root = tempfile.mkdtemp(prefix="nordlicht_vec_")
             cfg = dataclasses.replace(cfg, cache_root=self._owned_cache_root)
         self.workers = [_SingleDoomWorker(i, cfg) for i in range(num_envs)]
+        self._pending_slices: dict[tuple[int, int], list[Any]] = {}
 
     def reset(self) -> list[ProcessedObservation]:
         return [w.reset() for w in self.workers]
@@ -352,6 +353,13 @@ class DummyVecEnv:
     def set_stage(self, stage: int) -> None:
         for w in self.workers:
             w.set_stage(stage)
+
+    def step_async_slice(self, start: int, end: int, actions: np.ndarray) -> None:
+        self._pending_slices[(start, end)] = [self.workers[i].step(actions[i - start]) for i in range(start, end)]
+
+    def step_wait_slice(self, start: int, end: int) -> VecEnvStep:
+        results = self._pending_slices.pop((start, end))
+        return _collate_worker_results(results)
 
     def step(self, actions: np.ndarray) -> VecEnvStep:
         results = [w.step(actions[i]) for i, w in enumerate(self.workers)]
@@ -400,11 +408,17 @@ class SubprocVecEnv:
         for remote in self._remotes:
             remote.recv()
 
-    def step(self, actions: np.ndarray) -> VecEnvStep:
-        for i, remote in enumerate(self._remotes):
-            remote.send(("step", actions[i]))
-        results = [remote.recv() for remote in self._remotes]
+    def step_async_slice(self, start: int, end: int, actions: np.ndarray) -> None:
+        for i in range(start, end):
+            self._remotes[i].send(("step", actions[i - start]))
+
+    def step_wait_slice(self, start: int, end: int) -> VecEnvStep:
+        results = [self._remotes[i].recv() for i in range(start, end)]
         return _collate_worker_results(results)
+
+    def step(self, actions: np.ndarray) -> VecEnvStep:
+        self.step_async_slice(0, self.num_envs, actions)
+        return self.step_wait_slice(0, self.num_envs)
 
     def close(self) -> None:
         if self._closed:

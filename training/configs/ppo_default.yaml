@@ -7,10 +7,10 @@ train:
   total_steps: 2000000
   eval_interval_updates: 50
   save_interval_updates: 25
-  eval_maps_per_tier: 4
+  eval_maps_per_tier: 2
 
 env:
-  num_envs: 12
+  num_envs: 20
   use_subproc: true
   initial_stage: 0
   episode_ticks: 2100
@@ -26,7 +26,8 @@ env:
 ppo:
   rollout_len: 128
   seq_len: 32
-  minibatch_seqs: 16
+  minibatch_seqs: 40
+  use_bf16: true
   ppo_epochs: 3
   gamma: 0.995
   gamma_int: 0.99

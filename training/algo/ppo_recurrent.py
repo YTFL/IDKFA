@@ -52,6 +52,7 @@ class RecurrentPPOConfig:
 
     entity_dropout_prob: float = 0.05
     obs_noise_std: float = 0.01
+    use_bf16: bool = True
 
 
 def _state_to_cpu_detached(state: EMLRPState) -> EMLRPState:
@@ -293,10 +294,15 @@ class RecurrentPPOTrainer:
         self.device = torch.device(device)
         self.policy.to(self.device)
         self.include_depth = self.policy.config.depth_feat_dim > 0
+        self.use_amp = (
+            bool(self.config.use_bf16)
+            and self.device.type == "cuda"
+            and torch.cuda.is_bf16_supported()
+        )
         self.optimizer = torch.optim.Adam(self.policy.parameters(), lr=self.config.lr, eps=1e-5)
         self.rng = np.random.default_rng(seed)
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def select_actions(
         self,
         obs_list: list[ProcessedObservation],
@@ -312,11 +318,13 @@ class RecurrentPPOTrainer:
             obs_list, device=self.device, include_depth=self.include_depth
         )
         done_t = torch.as_tensor(reset_mask, dtype=torch.bool, device=self.device)
-        out = self.policy.step(obs_t, state, prev_act_t, done=done_t, compute_aux=False)
+        with torch.amp.autocast("cuda", dtype=torch.bfloat16, enabled=self.use_amp):
+            out = self.policy.step(obs_t, state, prev_act_t, done=done_t, compute_aux=False)
 
-        dist = Bernoulli(logits=out.action_logits)
+        logits_f = out.action_logits.float()
+        dist = Bernoulli(logits=logits_f)
         if deterministic:
-            actions_t = (out.action_logits > 0.0).float()
+            actions_t = (logits_f > 0.0).float()
         else:
             actions_t = dist.sample()
         log_probs_t = dist.log_prob(actions_t).sum(dim=-1)
@@ -324,15 +332,19 @@ class RecurrentPPOTrainer:
         if was_training:
             self.policy.train()
 
+        scalars = torch.stack(
+            [log_probs_t, out.value_ext.squeeze(-1).float(), out.value_int.squeeze(-1).float()],
+            dim=0,
+        ).cpu().numpy()
         return (
             actions_t.cpu().numpy().astype(np.int8),
-            log_probs_t.cpu().numpy().astype(np.float32),
-            out.value_ext.squeeze(-1).cpu().numpy().astype(np.float32),
-            out.value_int.squeeze(-1).cpu().numpy().astype(np.float32),
+            scalars[0].astype(np.float32),
+            scalars[1].astype(np.float32),
+            scalars[2].astype(np.float32),
             out.state,
         )
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def evaluate_values(
         self,
         obs_list: list[ProcessedObservation],
@@ -347,15 +359,16 @@ class RecurrentPPOTrainer:
             obs_list, device=self.device, include_depth=self.include_depth
         )
         done_t = torch.as_tensor(reset_mask, dtype=torch.bool, device=self.device)
-        out = self.policy.step(obs_t, state, prev_act_t, done=done_t, compute_aux=False)
+        with torch.amp.autocast("cuda", dtype=torch.bfloat16, enabled=self.use_amp):
+            out = self.policy.step(obs_t, state, prev_act_t, done=done_t, compute_aux=False)
 
         if was_training:
             self.policy.train()
 
-        return (
-            out.value_ext.squeeze(-1).cpu().numpy().astype(np.float32),
-            out.value_int.squeeze(-1).cpu().numpy().astype(np.float32),
-        )
+        vals = torch.stack(
+            [out.value_ext.squeeze(-1).float(), out.value_int.squeeze(-1).float()], dim=0
+        ).cpu().numpy()
+        return vals[0].astype(np.float32), vals[1].astype(np.float32)
 
     def _augment_obs(self, obs_seq: dict[str, Tensor]) -> dict[str, Tensor]:
         cfg = self.config
@@ -405,15 +418,16 @@ class RecurrentPPOTrainer:
                 break
             for mb in buffer.iter_minibatches(cfg.minibatch_seqs, self.device, self.rng):
                 aug_obs = self._augment_obs(mb["obs_seq"])
-                outputs, _ = self.policy.forward_sequence(
-                    aug_obs,
-                    mb["init_state"],
-                    mb["prev_action"],
-                    done_seq=mb["reset_before_step"],
-                    compute_aux=True,
-                )
+                with torch.amp.autocast("cuda", dtype=torch.bfloat16, enabled=self.use_amp):
+                    outputs, _ = self.policy.forward_sequence(
+                        aug_obs,
+                        mb["init_state"],
+                        mb["prev_action"],
+                        done_seq=mb["reset_before_step"],
+                        compute_aux=True,
+                    )
 
-                dist = Bernoulli(logits=outputs["action_logits"])
+                dist = Bernoulli(logits=outputs["action_logits"].float())
                 new_logp = dist.log_prob(mb["action"]).sum(dim=-1)
                 entropy = dist.entropy().sum(dim=-1).mean()
 
@@ -428,8 +442,8 @@ class RecurrentPPOTrainer:
                 pg_loss2 = -adv * torch.clamp(ratio, 1.0 - cfg.clip_eps, 1.0 + cfg.clip_eps)
                 policy_loss = torch.max(pg_loss1, pg_loss2).mean()
 
-                v_ext = outputs["value_ext"].squeeze(-1)
-                v_int = outputs["value_int"].squeeze(-1)
+                v_ext = outputs["value_ext"].squeeze(-1).float()
+                v_int = outputs["value_int"].squeeze(-1).float()
                 if cfg.value_clip_eps > 0.0:
                     v_ext_clipped = mb["old_value_ext"] + torch.clamp(
                         v_ext - mb["old_value_ext"], -cfg.value_clip_eps, cfg.value_clip_eps
@@ -451,18 +465,18 @@ class RecurrentPPOTrainer:
                 aux_loss = torch.zeros((), device=self.device)
                 if cfg.aux_coef > 0.0:
                     nonterm = (~mb["done"]).float()
-                    ray_err = (outputs["aux_next_ray"] - mb["next_ray_distance"]).pow(2).mean(dim=-1)
+                    ray_err = (outputs["aux_next_ray"].float() - mb["next_ray_distance"]).pow(2).mean(dim=-1)
                     next_ray_loss = (ray_err * nonterm).sum() / nonterm.sum().clamp(min=1.0)
 
                     inv_dyn_loss = F.binary_cross_entropy_with_logits(
-                        outputs["aux_inverse_dyn"], mb["action"]
+                        outputs["aux_inverse_dyn"].float(), mb["action"]
                     )
                     combat_loss = F.binary_cross_entropy_with_logits(
-                        outputs["aux_combat"], mb["aux_combat"]
+                        outputs["aux_combat"].float(), mb["aux_combat"]
                     )
 
                     dir_mask = mb["aux_landmark_mask"]
-                    dir_pred = F.normalize(outputs["aux_landmark_dir"], dim=-1, eps=1e-6)
+                    dir_pred = F.normalize(outputs["aux_landmark_dir"].float(), dim=-1, eps=1e-6)
                     dir_err = (dir_pred - mb["aux_landmark_dir"]).pow(2).sum(dim=-1)
                     landmark_dir_loss = (dir_err * dir_mask).sum() / dir_mask.sum().clamp(min=1.0)
 
@@ -471,7 +485,7 @@ class RecurrentPPOTrainer:
                     imp_target = ((ent_types >= 1) & (ent_types <= 3) | (ent_types == 9)).float()
                     ent_mask = mb["obs_seq"]["entity_mask"]
                     imp_bce = F.binary_cross_entropy_with_logits(
-                        outputs["aux_entity_importance"], imp_target, reduction="none"
+                        outputs["aux_entity_importance"].float(), imp_target, reduction="none"
                     )
                     entity_imp_loss = (imp_bce * ent_mask).sum() / ent_mask.sum().clamp(min=1.0)
 

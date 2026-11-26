@@ -182,20 +182,27 @@ def test_dummy_and_subproc_vec_env(tmp_path: Path) -> None:
     obs_s = s_env.reset()
     assert len(obs_s) == 2
     s_env.set_stage(3)
-    for _ in range(15):
+    for _ in range(10):
         s_res = s_env.step(np.ones((2, 9), dtype=np.int8))
         assert len(s_res.obs) == 2
+    # Exercise split-half async stepping used by double-buffered rollout
+    s_env.step_async_slice(0, 1, np.zeros((1, 9), dtype=np.int8))
+    s_env.step_async_slice(1, 2, np.ones((1, 9), dtype=np.int8))
+    r0 = s_env.step_wait_slice(0, 1)
+    r1 = s_env.step_wait_slice(1, 2)
+    assert len(r0.obs) == 1 and len(r1.obs) == 1
     s_env.close()
 
 
 def test_smoke_train_resume_and_eval(tmp_path: Path) -> None:
     cfg = load_curriculum_yaml("training/configs/ppo_smoke.yaml")
+    cfg.setdefault("ppo", {})["use_bf16"] = True
     run_name = "pytest_smoke_run"
-    # Direct smoke run artifacts under repo runs/checkpoints or verify end-to-end
+    # Direct smoke run artifacts under repo runs/checkpoints or verify end-to-end (num_envs=4 exercises double-buffered path)
     out = train(
         config=cfg,
-        num_envs_override=2,
-        total_steps_override=128,
+        num_envs_override=4,
+        total_steps_override=256,
         run_name_override=run_name,
         force_dummy_vec=True,
     )
@@ -215,13 +222,13 @@ def test_smoke_train_resume_and_eval(tmp_path: Path) -> None:
     # Resume for 1 more update
     out2 = train(
         config=cfg,
-        num_envs_override=2,
-        total_steps_override=192,
+        num_envs_override=4,
+        total_steps_override=384,
         run_name_override=run_name,
         resume_path=ckpt_latest,
         force_dummy_vec=True,
     )
-    assert out2["global_step"] >= 192
+    assert out2["global_step"] >= 384
 
     # Evaluate saved best checkpoint on held-out val subset
     dev = "cuda" if torch.cuda.is_available() else "cpu"

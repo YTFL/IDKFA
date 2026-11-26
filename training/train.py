@@ -24,7 +24,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from submission.features import ObservationPreprocessor
-from submission.models import EMLRPConfig, EMLRPPolicy
+from submission.models import EMLRPConfig, EMLRPPolicy, EMLRPState
 from training.algo import RecurrentPPOConfig, RecurrentPPOTrainer, RecurrentRolloutBuffer
 from training.envs.curriculum import CurriculumManager, CurriculumStage, load_curriculum_yaml
 from training.envs.vec_env import DummyVecEnv, SubprocVecEnv, WorkerConfig
@@ -50,6 +50,26 @@ def _format_duration(seconds: float) -> str:
     if mins > 0:
         return f"{mins}m {secs:02d}s"
     return f"{secs}s"
+
+
+def _slice_state(state: EMLRPState, start: int, end: int) -> EMLRPState:
+    return EMLRPState(
+        gru_h=state.gru_h[start:end],
+        spatial_map=state.spatial_map[start:end],
+        landmark_keys=state.landmark_keys[start:end],
+        landmark_pos=state.landmark_pos[start:end],
+        landmark_valid=state.landmark_valid[start:end],
+    )
+
+
+def _concat_states(s0: EMLRPState, s1: EMLRPState) -> EMLRPState:
+    return EMLRPState(
+        gru_h=torch.cat([s0.gru_h, s1.gru_h], dim=0),
+        spatial_map=torch.cat([s0.spatial_map, s1.spatial_map], dim=0),
+        landmark_keys=torch.cat([s0.landmark_keys, s1.landmark_keys], dim=0),
+        landmark_pos=torch.cat([s0.landmark_pos, s1.landmark_pos], dim=0),
+        landmark_valid=torch.cat([s0.landmark_valid, s1.landmark_valid], dim=0),
+    )
 
 
 def _load_dataset_train_maps(manifest_path: str | Path | None) -> list[str]:
@@ -244,23 +264,68 @@ def train(
                 ppo_cfg.intrinsic_coef_end - ppo_cfg.intrinsic_coef_start
             )
 
+            mid = num_envs // 2
             for _t in range(ppo_cfg.rollout_len):
                 state_before = state
                 reset_before = reset_mask.copy()
 
-                actions, log_probs, v_ext, v_int, next_state = trainer.select_actions(
-                    obs_list, state_before, reset_before, deterministic=False
-                )
-                step_res = vec_env.step(actions)
+                if mid > 0 and num_envs >= 4:
+                    # Double-buffered split-half pipeline: overlap CPU ViZDoom stepping with GPU inference + RND
+                    s0_in = _slice_state(state_before, 0, mid)
+                    s1_in = _slice_state(state_before, mid, num_envs)
+                    act_0, lp_0, ve_0, vi_0, s0_out = trainer.select_actions(
+                        obs_list[:mid], s0_in, reset_before[:mid], deterministic=False
+                    )
+                    vec_env.step_async_slice(0, mid, act_0)
 
-                # Centralized RND over post-step spatial layout
-                r_rnd = rnd.compute_intrinsic_rewards_batch(
-                    torch.from_numpy(step_res.spatial_vec), update_predictor=True
-                )
-                r_int = r_rnd + step_res.reward_episodic
+                    act_1, lp_1, ve_1, vi_1, s1_out = trainer.select_actions(
+                        obs_list[mid:], s1_in, reset_before[mid:], deterministic=False
+                    )
+                    vec_env.step_async_slice(mid, num_envs, act_1)
 
-                # Next ray distance for non-terminal steps (from step_res.spatial_vec first 64*8=512 -> (B,64,8)[...,0])
-                next_rays = step_res.spatial_vec[:, : 64 * 8].reshape(num_envs, 64, 8)[..., 0]
+                    res_0 = vec_env.step_wait_slice(0, mid)
+                    r_rnd_0 = rnd.compute_intrinsic_rewards_batch(
+                        torch.from_numpy(res_0.spatial_vec), update_predictor=True
+                    )
+                    res_1 = vec_env.step_wait_slice(mid, num_envs)
+                    r_rnd_1 = rnd.compute_intrinsic_rewards_batch(
+                        torch.from_numpy(res_1.spatial_vec), update_predictor=True
+                    )
+
+                    actions = np.concatenate([act_0, act_1], axis=0)
+                    log_probs = np.concatenate([lp_0, lp_1], axis=0)
+                    v_ext = np.concatenate([ve_0, ve_1], axis=0)
+                    v_int = np.concatenate([vi_0, vi_1], axis=0)
+                    next_state = _concat_states(s0_out, s1_out)
+
+                    next_obs = res_0.obs + res_1.obs
+                    spatial_vec = np.concatenate([res_0.spatial_vec, res_1.spatial_vec], axis=0)
+                    reward_ext = np.concatenate([res_0.reward_ext, res_1.reward_ext], axis=0)
+                    r_int = np.concatenate([r_rnd_0 + res_0.reward_episodic, r_rnd_1 + res_1.reward_episodic], axis=0)
+                    step_done = np.concatenate([res_0.done, res_1.done], axis=0)
+                    aux_combat = np.concatenate([res_0.aux_combat, res_1.aux_combat], axis=0)
+                    aux_dir = np.concatenate([res_0.aux_landmark_dir, res_1.aux_landmark_dir], axis=0)
+                    aux_mask = np.concatenate([res_0.aux_landmark_mask, res_1.aux_landmark_mask], axis=0)
+                    summaries = res_0.episode_summaries + res_1.episode_summaries
+                else:
+                    actions, log_probs, v_ext, v_int, next_state = trainer.select_actions(
+                        obs_list, state_before, reset_before, deterministic=False
+                    )
+                    step_res = vec_env.step(actions)
+                    r_rnd = rnd.compute_intrinsic_rewards_batch(
+                        torch.from_numpy(step_res.spatial_vec), update_predictor=True
+                    )
+                    next_obs = step_res.obs
+                    spatial_vec = step_res.spatial_vec
+                    reward_ext = step_res.reward_ext
+                    r_int = r_rnd + step_res.reward_episodic
+                    step_done = step_res.done
+                    aux_combat = step_res.aux_combat
+                    aux_dir = step_res.aux_landmark_dir
+                    aux_mask = step_res.aux_landmark_mask
+                    summaries = step_res.episode_summaries
+
+                next_rays = spatial_vec[:, : 64 * 8].reshape(num_envs, 64, 8)[..., 0]
 
                 buffer.add(
                     obs=obs_list,
@@ -270,21 +335,21 @@ def train(
                     log_prob=log_probs,
                     value_ext=v_ext,
                     value_int=v_int,
-                    reward_ext=step_res.reward_ext,
+                    reward_ext=reward_ext,
                     reward_int=r_int,
-                    done=step_res.done,
+                    done=step_done,
                     next_ray_distance=next_rays,
-                    aux_combat=step_res.aux_combat,
-                    aux_landmark_dir=step_res.aux_landmark_dir,
-                    aux_landmark_mask=step_res.aux_landmark_mask,
+                    aux_combat=aux_combat,
+                    aux_landmark_dir=aux_dir,
+                    aux_landmark_mask=aux_mask,
                 )
 
-                obs_list = step_res.obs
+                obs_list = next_obs
                 state = next_state
-                reset_mask = step_res.done.copy()
+                reset_mask = step_done.copy()
                 global_step += num_envs
 
-                for summ in step_res.episode_summaries:
+                for summ in summaries:
                     recent_episodes.append(summ)
                     prev_stage = curriculum.current_stage
                     curriculum.record_episode(bool(summ["success"]))
