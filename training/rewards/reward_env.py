@@ -78,6 +78,7 @@ class ShapedRewardEnv(gym.Wrapper):
             terminated=terminated,
             truncated=truncated,
             info=info,
+            action=act,
         )
 
         # 2. Preprocess observation for curiosity

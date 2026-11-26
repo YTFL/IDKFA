@@ -23,6 +23,7 @@ WEIGHTS_DIR = SUBMISSION_DIR / "weights"
 if str(REPO_DIR) not in sys.path:
     sys.path.insert(0, str(REPO_DIR))
 
+from submission.action_mask import compute_masked_action_probs, compute_obs_action_mask_np, sample_masked_bernoulli  # noqa: E402
 from submission.features import (  # noqa: E402
     ACTION_DIM,
     MAX_ENTITIES,
@@ -159,6 +160,7 @@ class DoomAgent:
         self._rng: torch.Generator | None = None
         self._last_action_logits: torch.Tensor | None = None
         self._last_mode_logits: torch.Tensor | None = None
+        self._last_action_mask = np.ones(self._action_dim, dtype=np.float32)
         self.state: EMLRPState = self.policy.init_state(1, device=self.exec_device)
 
         self._warmup()
@@ -284,34 +286,46 @@ class DoomAgent:
         self._last_safe_action[0] = 1
         self._last_action_logits = None
         self._last_mode_logits = None
+        self._last_action_mask.fill(1.0)
         self.state = self.policy.init_state(1, device=self.exec_device)
         if self.temperature > 0.0:
             self._rng = torch.Generator(device=self.exec_device)
             self._rng.manual_seed(0)
 
-    def _decode_action(self, logits: torch.Tensor) -> np.ndarray:
-        if self.temperature > 0.0:
-            probs = torch.sigmoid(logits / self.temperature)
-            act_t = torch.bernoulli(probs, generator=self._rng).to(torch.int8)
+    def _decode_action(self, logits: torch.Tensor, action_mask: np.ndarray | None = None) -> np.ndarray:
+        scale = self.temperature if self.temperature > 0.0 else 1.0
+        scaled_logits = logits.float() / scale
+        if action_mask is None:
+            mask_t = torch.ones_like(scaled_logits)
         else:
-            act_t = (logits > 0.0).to(torch.int8)
-        action = act_t.cpu().numpy()
-        action = np.asarray(action != 0, dtype=np.int8).reshape(self._action_dim)
+            mask_t = torch.as_tensor(action_mask, dtype=torch.float32, device=scaled_logits.device)
+        act_t, _ = sample_masked_bernoulli(
+            scaled_logits,
+            mask_t,
+            deterministic=(self.temperature <= 0.0),
+            generator=self._rng,
+        )
+        action = np.asarray(act_t.cpu().numpy() != 0, dtype=np.int8).reshape(self._action_dim)
         return action
 
     def get_last_telemetry(self) -> dict[str, Any]:
         """Return neural action probabilities, latent mode probs, and memory stats for dashboards."""
+        mask_t = torch.as_tensor(self._last_action_mask, dtype=torch.float32)
         if self._last_action_logits is None:
-            action_probs = np.full(self._action_dim, 0.5, dtype=np.float32)
+            action_probs = np.full(self._action_dim, 0.5, dtype=np.float32) * self._last_action_mask
         else:
             scale = self.temperature if self.temperature > 0.0 else 1.0
-            action_probs = torch.sigmoid(self._last_action_logits / scale).detach().cpu().numpy()
+            action_probs = (
+                compute_masked_action_probs(self._last_action_logits.detach().cpu() / scale, mask_t)
+                .numpy()
+            )
         if self._last_mode_logits is None:
             mode_probs = np.full(self.policy.config.num_latent_modes, 1.0 / self.policy.config.num_latent_modes, dtype=np.float32)
         else:
             mode_probs = torch.softmax(self._last_mode_logits, dim=-1).detach().cpu().numpy()
         return {
             "action_probs": action_probs,
+            "action_mask": self._last_action_mask.copy(),
             "mode_probs": mode_probs,
             "spatial_map": self.state.spatial_map[0].detach().cpu().numpy(),
             "active_landmark_slots": int((self.state.landmark_valid[0] > 0.05).sum().item()),
@@ -322,6 +336,8 @@ class DoomAgent:
         try:
             clean_obs = self._sanitize_observation(observation)
             p_obs = self.preprocessor.process(clean_obs, prev_action=self._prev_action)
+            action_mask = compute_obs_action_mask_np(p_obs)
+            self._last_action_mask = action_mask
             obs_t, prev_act_t = single_obs_to_tensors(
                 p_obs, device=self.exec_device, include_depth=self.include_depth
             )
@@ -330,7 +346,7 @@ class DoomAgent:
                 self.state = out.state
                 self._last_action_logits = out.action_logits[0]
                 self._last_mode_logits = out.mode_logits[0]
-                action = self._decode_action(out.action_logits[0])
+                action = self._decode_action(out.action_logits[0], action_mask=action_mask)
             self._prev_action[:] = action
             self._last_safe_action[:] = action
             for idx in _EDGE_BUTTON_INDICES:

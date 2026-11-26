@@ -12,6 +12,11 @@ import torch.nn.functional as F
 from torch import Tensor
 from torch.distributions import Bernoulli
 
+from submission.action_mask import (
+    compute_obs_action_mask_np,
+    eval_masked_bernoulli,
+    sample_masked_bernoulli,
+)
 from submission.features import ACTION_DIM, DEPTH_DOWN_WIDTH, MAX_ENTITIES, NUM_RAYS, VITALS_DIM, ProcessedObservation
 from submission.models import EMLRPConfig, EMLRPPolicy, EMLRPState, processed_to_tensors
 
@@ -53,6 +58,9 @@ class RecurrentPPOConfig:
     entity_dropout_prob: float = 0.05
     obs_noise_std: float = 0.01
     use_bf16: bool = True
+    use_action_mask: bool = True
+    critic_warmup_updates: int = 0
+    bc_kl_coef: float = 0.0
 
 
 def _state_to_cpu_detached(state: EMLRPState) -> EMLRPState:
@@ -110,7 +118,14 @@ def _compute_gae(
 class RecurrentRolloutBuffer:
     """Host-RAM rollout storage supporting chunked truncated BPTT and dual GAE."""
 
-    def __init__(self, rollout_len: int, num_envs: int, seq_len: int, include_depth: bool = True) -> None:
+    def __init__(
+        self,
+        rollout_len: int,
+        num_envs: int,
+        seq_len: int,
+        include_depth: bool = True,
+        use_action_mask: bool = True,
+    ) -> None:
         if rollout_len % seq_len != 0:
             raise ValueError(f"rollout_len ({rollout_len}) must be divisible by seq_len ({seq_len})")
         self.T = rollout_len
@@ -118,6 +133,7 @@ class RecurrentRolloutBuffer:
         self.seq_len = seq_len
         self.num_chunks = rollout_len // seq_len
         self.include_depth = include_depth
+        self.use_action_mask = use_action_mask
 
         T, B = rollout_len, num_envs
         self.ray_distance = np.zeros((T, B, NUM_RAYS), dtype=np.float32)
@@ -128,6 +144,7 @@ class RecurrentRolloutBuffer:
         self.vitals = np.zeros((T, B, VITALS_DIM), dtype=np.float32)
         self.depth_feat = np.zeros((T, B, DEPTH_DOWN_WIDTH), dtype=np.float32)
         self.prev_action = np.zeros((T, B, ACTION_DIM), dtype=np.float32)
+        self.action_mask = np.ones((T, B, ACTION_DIM), dtype=np.float32)
 
         self.reset_before_step = np.zeros((T, B), dtype=bool)
         self.action = np.zeros((T, B, ACTION_DIM), dtype=np.float32)
@@ -195,6 +212,10 @@ class RecurrentRolloutBuffer:
 
         self.reset_before_step[t] = reset_before_step
         self.action[t] = action
+        if self.use_action_mask:
+            self.action_mask[t] = compute_obs_action_mask_np(obs)
+        else:
+            self.action_mask[t] = 1.0
         self.log_prob[t] = log_prob
         self.value_ext[t] = value_ext
         self.value_int[t] = value_int
@@ -265,6 +286,7 @@ class RecurrentRolloutBuffer:
                 "prev_action": _gather_seq(self.prev_action),
                 "reset_before_step": _gather_seq(self.reset_before_step, dtype=torch.bool),
                 "action": _gather_seq(self.action),
+                "action_mask": _gather_seq(self.action_mask),
                 "old_log_prob": _gather_seq(self.log_prob),
                 "old_value_ext": _gather_seq(self.value_ext),
                 "old_value_int": _gather_seq(self.value_int),
@@ -301,6 +323,8 @@ class RecurrentPPOTrainer:
         )
         self.optimizer = torch.optim.Adam(self.policy.parameters(), lr=self.config.lr, eps=1e-5)
         self.rng = np.random.default_rng(seed)
+        self.current_update_idx: int = 1
+        self.bc_ref_policy: EMLRPPolicy | None = None
 
     @torch.inference_mode()
     def select_actions(
@@ -322,12 +346,16 @@ class RecurrentPPOTrainer:
             out = self.policy.step(obs_t, state, prev_act_t, done=done_t, compute_aux=False)
 
         logits_f = out.action_logits.float()
-        dist = Bernoulli(logits=logits_f)
-        if deterministic:
-            actions_t = (logits_f > 0.0).float()
+        if self.config.use_action_mask:
+            mask_t = torch.as_tensor(compute_obs_action_mask_np(obs_list), dtype=torch.float32, device=self.device)
+            actions_t, log_probs_t = sample_masked_bernoulli(logits_f, mask_t, deterministic=deterministic)
         else:
-            actions_t = dist.sample()
-        log_probs_t = dist.log_prob(actions_t).sum(dim=-1)
+            dist = Bernoulli(logits=logits_f)
+            if deterministic:
+                actions_t = (logits_f > 0.0).float()
+            else:
+                actions_t = dist.sample()
+            log_probs_t = dist.log_prob(actions_t).sum(dim=-1)
 
         if was_training:
             self.policy.train()
@@ -390,12 +418,21 @@ class RecurrentPPOTrainer:
             out["entity_mask"] = out["entity_mask"] * keep
         return out
 
-    def update(self, buffer: RecurrentRolloutBuffer, progress_frac: float = 0.0) -> dict[str, float]:
+    def update(
+        self,
+        buffer: RecurrentRolloutBuffer,
+        progress_frac: float = 0.0,
+        update_idx: int | None = None,
+        bc_ref_policy: EMLRPPolicy | None = None,
+    ) -> dict[str, float]:
         """Run PPO + auxiliary BPTT epochs over `buffer`."""
         cfg = self.config
+        eff_update_idx = self.current_update_idx if update_idx is None else update_idx
+        eff_bc_ref = self.bc_ref_policy if bc_ref_policy is None else bc_ref_policy
         progress = float(np.clip(progress_frac, 0.0, 1.0))
         lr = cfg.lr + progress * (cfg.lr_end - cfg.lr)
         entropy_coef = cfg.entropy_coef_start + progress * (cfg.entropy_coef_end - cfg.entropy_coef_start)
+        in_critic_warmup = eff_update_idx <= cfg.critic_warmup_updates
         for pg in self.optimizer.param_groups:
             pg["lr"] = lr
 
@@ -427,9 +464,14 @@ class RecurrentPPOTrainer:
                         compute_aux=True,
                     )
 
-                dist = Bernoulli(logits=outputs["action_logits"].float())
-                new_logp = dist.log_prob(mb["action"]).sum(dim=-1)
-                entropy = dist.entropy().sum(dim=-1).mean()
+                logits_f = outputs["action_logits"].float()
+                if cfg.use_action_mask:
+                    new_logp, ent_step = eval_masked_bernoulli(logits_f, mb["action"], mb["action_mask"])
+                    entropy = ent_step.mean()
+                else:
+                    dist = Bernoulli(logits=logits_f)
+                    new_logp = dist.log_prob(mb["action"]).sum(dim=-1)
+                    entropy = dist.entropy().sum(dim=-1).mean()
 
                 log_ratio = new_logp - mb["old_log_prob"]
                 ratio = torch.exp(log_ratio)
@@ -441,6 +483,28 @@ class RecurrentPPOTrainer:
                 pg_loss1 = -adv * ratio
                 pg_loss2 = -adv * torch.clamp(ratio, 1.0 - cfg.clip_eps, 1.0 + cfg.clip_eps)
                 policy_loss = torch.max(pg_loss1, pg_loss2).mean()
+
+                # Optional decaying BC KL anchor to preserve skills during early PPO fine-tuning
+                bc_kl_loss = torch.zeros((), device=self.device)
+                bc_kl_weight = cfg.bc_kl_coef * (1.0 - progress)
+                if (not in_critic_warmup) and eff_bc_ref is not None and bc_kl_weight > 0.0:
+                    with torch.no_grad():
+                        with torch.amp.autocast("cuda", dtype=torch.bfloat16, enabled=self.use_amp):
+                            ref_out, _ = eff_bc_ref.forward_sequence(
+                                mb["obs_seq"],
+                                mb["init_state"],
+                                mb["prev_action"],
+                                done_seq=mb["reset_before_step"],
+                                compute_aux=False,
+                            )
+                        ref_logits = ref_out["action_logits"].float()
+                    p_ref = torch.sigmoid(ref_logits).clamp(1e-5, 1.0 - 1e-5)
+                    p_cur = torch.sigmoid(logits_f).clamp(1e-5, 1.0 - 1e-5)
+                    kl_elem = p_ref * (torch.log(p_ref) - torch.log(p_cur)) + (1.0 - p_ref) * (
+                        torch.log(1.0 - p_ref) - torch.log(1.0 - p_cur)
+                    )
+                    m_bc = mb["action_mask"] if cfg.use_action_mask else torch.ones_like(kl_elem)
+                    bc_kl_loss = (kl_elem * m_bc).sum() / m_bc.sum().clamp(min=1.0)
 
                 v_ext = outputs["value_ext"].squeeze(-1).float()
                 v_int = outputs["value_int"].squeeze(-1).float()
@@ -497,16 +561,24 @@ class RecurrentPPOTrainer:
                         + cfg.aux_entity_imp_weight * entity_imp_loss
                     )
 
-                total_loss = (
-                    policy_loss
-                    + cfg.vf_ext_coef * vf_ext_loss
-                    + cfg.vf_int_coef * vf_int_loss
-                    - entropy_coef * entropy
-                    + cfg.aux_coef * aux_loss
-                )
+                if in_critic_warmup:
+                    total_loss = cfg.vf_ext_coef * vf_ext_loss + cfg.vf_int_coef * vf_int_loss
+                else:
+                    total_loss = (
+                        policy_loss
+                        + cfg.vf_ext_coef * vf_ext_loss
+                        + cfg.vf_int_coef * vf_int_loss
+                        - entropy_coef * entropy
+                        + cfg.aux_coef * aux_loss
+                        + bc_kl_weight * bc_kl_loss
+                    )
 
                 self.optimizer.zero_grad()
                 total_loss.backward()
+                if in_critic_warmup:
+                    for name, p in self.policy.named_parameters():
+                        if p.grad is not None and not name.startswith("value_"):
+                            p.grad.zero_()
                 grad_norm = nn.utils.clip_grad_norm_(self.policy.parameters(), cfg.max_grad_norm)
                 self.optimizer.step()
 
@@ -519,7 +591,7 @@ class RecurrentPPOTrainer:
                 stats["aux_loss"].append(float(aux_loss.item()))
                 stats["grad_norm"].append(float(grad_norm.item()))
 
-                if cfg.target_kl > 0.0 and approx_kl.item() > 1.5 * cfg.target_kl:
+                if (not in_critic_warmup) and cfg.target_kl > 0.0 and approx_kl.item() > 1.5 * cfg.target_kl:
                     early_stop = True
                     break
 

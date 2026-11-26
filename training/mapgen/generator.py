@@ -154,8 +154,8 @@ class ProceduralMapGenerator:
 
         # Items
         m.add_thing(64.0 + room_size / 2, 64.0 + room_size / 2, THING_STIMPACK)
+        m.add_thing(64.0 + room_size / 2 + 32, 64.0 + room_size / 2, THING_CLIP)
         if difficulty > 0.4:
-            m.add_thing(64.0 + room_size / 2 + 32, 64.0 + room_size / 2, THING_CLIP)
             m.add_thing(128.0, 64.0 + room_size - 96.0, THING_MEDIKIT)
 
         m.metadata = {
@@ -603,6 +603,19 @@ class ProceduralMapGenerator:
                 lightlevel=192,
             )
             room_sectors[rid] = sec
+
+        m.metadata["room_centers"] = {
+            int(rid): ((rx1 + rx2) / 2.0, (ry1 + ry2) / 2.0)
+            for rid, (rx1, ry1, rx2, ry2) in room_coords.items()
+        }
+        m.metadata["room_bounds"] = {
+            int(rid): (float(rx1), float(ry1), float(rx2), float(ry2))
+            for rid, (rx1, ry1, rx2, ry2) in room_coords.items()
+        }
+        m.metadata["nav_edges"] = [
+            (int(u), int(v), int(door_lookup[(u, v)]) if (u, v) in door_lookup else -1)
+            for u, v in edges
+        ]
 
         # Outer walls and connecting edges
         # Map out grid connections

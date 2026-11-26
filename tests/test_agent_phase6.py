@@ -166,7 +166,13 @@ def test_agent_sanitization_edge_cases_and_fallback(
         )
 
     monkeypatch.setattr(agent.policy, "step", _all_ones)
-    ones_act = agent.act(_make_obs(seed=7))
+    agent._prev_action[:] = 0
+    edge_obs = _make_obs(seed=7)
+    edge_obs["vitals"][3] = 0.0
+    edge_obs["vitals"][4] = 25.0
+    edge_obs["rays"]["hit_type"][0] = 2
+    edge_obs["rays"]["distance"][0] = 0.1
+    ones_act = agent.act(edge_obs)
     assert ones_act[7] == 1 and ones_act[8] == 1
     assert agent._last_safe_action[7] == 0 and agent._last_safe_action[8] == 0
 

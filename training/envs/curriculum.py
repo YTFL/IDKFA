@@ -237,6 +237,7 @@ class CurriculumEnvWrapper(gym.Wrapper):
             if shells < 8.0:
                 self._send_game_cmd("give Shell")
 
+        pre_obs = self._last_obs
         obs, base_reward, terminated, truncated, info = self.env.step(act)
         self.step_count += 1
         self._last_obs = obs
@@ -249,6 +250,8 @@ class CurriculumEnvWrapper(gym.Wrapper):
             terminated=terminated,
             truncated=truncated,
             info=info,
+            action=act,
+            pre_obs=pre_obs,
         )
 
         self.total_shaped_reward += shaped_reward
@@ -294,6 +297,7 @@ class CurriculumManager:
             if rehearsal_prob is not None
             else float(cur_sec.get("rehearsal_prob", 0.15))
         )
+        self.max_episodes_per_stage = int(cur_sec.get("max_episodes_per_stage", 0))
 
         self.reward_weights = RewardWeights(
             exit_reached=float(rewards_sec.get("exit_reached", 10.0)),
@@ -334,26 +338,39 @@ class CurriculumManager:
 
         self.generator = ProceduralMapGenerator()
         self.history: collections.deque[bool] = collections.deque(maxlen=self.window_size)
+        self.stage_episodes: int = 0
         self.total_episodes: int = 0
         self._last_map_metadata: dict[str, Any] = {}
 
     def record_episode(self, success: bool) -> None:
         self.history.append(success)
+        self.stage_episodes += 1
         self.total_episodes += 1
 
+        if self.current_stage >= CurriculumStage.STAGE_5_FULL_GAUNTLET:
+            return
+
+        promoted_reason: str | None = None
         if len(self.history) >= self.window_size:
             rate = sum(self.history) / len(self.history)
-            if (
-                rate >= self.promotion_threshold
-                and self.current_stage < CurriculumStage.STAGE_5_FULL_GAUNTLET
-            ):
-                promoted_to = CurriculumStage(self.current_stage + 1)
-                print(
-                    f"\n[CurriculumManager] Success rate {rate:.1%} exceeds {self.promotion_threshold:.1%}. "
-                    f"PROMOTING from {self.current_stage.name} -> {promoted_to.name}!"
-                )
-                self.current_stage = promoted_to
-                self.history.clear()
+            if rate >= self.promotion_threshold:
+                promoted_reason = f"Success rate {rate:.1%} >= {self.promotion_threshold:.1%}"
+        if (
+            promoted_reason is None
+            and self.max_episodes_per_stage > 0
+            and self.stage_episodes >= self.max_episodes_per_stage
+        ):
+            promoted_reason = f"Reached stage cap {self.stage_episodes} episodes"
+
+        if promoted_reason is not None:
+            promoted_to = CurriculumStage(self.current_stage + 1)
+            print(
+                f"\n[CurriculumManager] {promoted_reason}. "
+                f"PROMOTING from {self.current_stage.name} -> {promoted_to.name}!"
+            )
+            self.current_stage = promoted_to
+            self.history.clear()
+            self.stage_episodes = 0
 
     @property
     def success_rate(self) -> float:

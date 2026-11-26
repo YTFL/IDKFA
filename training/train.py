@@ -8,6 +8,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import copy
 import csv
 import dataclasses
 import json
@@ -141,6 +142,7 @@ def train(
     total_steps_override: int | None = None,
     run_name_override: str | None = None,
     resume_path: str | Path | None = None,
+    bc_init_path: str | Path | None = None,
     force_dummy_vec: bool = False,
 ) -> dict[str, Any]:
     train_cfg = dict(config.get("train", {}))
@@ -185,6 +187,7 @@ def train(
     global_step = 0
     start_update = 0
     best_val_score = -float("inf")
+    bc_ref_policy: EMLRPPolicy | None = None
 
     if resume_path is not None:
         ckpt = torch.load(resume_path, map_location=device, weights_only=False)
@@ -202,6 +205,14 @@ def train(
         global_step = int(ckpt.get("global_step", 0))
         start_update = int(ckpt.get("update_idx", 0))
         best_val_score = float(ckpt.get("best_val_score", -float("inf")))
+    elif bc_init_path is not None:
+        bc_ckpt = torch.load(bc_init_path, map_location=device, weights_only=False)
+        policy.load_state_dict(bc_ckpt["model_state_dict"])
+        if ppo_cfg.bc_kl_coef > 0.0:
+            bc_ref_policy = copy.deepcopy(policy).to(device).eval()
+            for p in bc_ref_policy.parameters():
+                p.requires_grad_(False)
+        print(f"[train] Initialized EMLRPPolicy from BC checkpoint: {bc_init_path}", flush=True)
 
     num_envs = int(num_envs_override or env_cfg.get("num_envs", 8))
     use_subproc = (not force_dummy_vec) and bool(env_cfg.get("use_subproc", True)) and num_envs > 1
@@ -244,6 +255,7 @@ def train(
         num_envs=num_envs,
         seq_len=ppo_cfg.seq_len,
         include_depth=use_depth,
+        use_action_mask=ppo_cfg.use_action_mask,
     )
 
     steps_per_update = ppo_cfg.rollout_len * num_envs
@@ -411,6 +423,8 @@ def train(
                 intrinsic_coef=intrinsic_coef,
             )
 
+            trainer.current_update_idx = update_idx
+            trainer.bc_ref_policy = bc_ref_policy
             in_ppo_update = True
             try:
                 ppo_stats = trainer.update(buffer, progress_frac=progress)
@@ -588,6 +602,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Train EMLRPPolicy with Recurrent PPO")
     parser.add_argument("--config", type=str, default="training/configs/ppo_default.yaml")
     parser.add_argument("--resume", type=str, default=None)
+    parser.add_argument("--bc-init", type=str, default=None)
     parser.add_argument("--device", type=str, default=None, choices=["auto", "cpu", "cuda"])
     parser.add_argument("--num-envs", type=int, default=None)
     parser.add_argument("--total-steps", type=int, default=None)
@@ -603,6 +618,7 @@ def main() -> None:
         total_steps_override=args.total_steps,
         run_name_override=args.run_name,
         resume_path=args.resume,
+        bc_init_path=args.bc_init,
         force_dummy_vec=args.dummy_vec,
     )
 

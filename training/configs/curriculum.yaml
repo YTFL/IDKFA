@@ -3,16 +3,17 @@
 
 curriculum:
   initial_stage: 0
-  promotion_threshold: 0.70    # Advance when rolling success >= 70%
+  promotion_threshold: 0.50    # Advance when rolling success >= 50%
   window_size: 100             # Episodes window
-  rehearsal_prob: 0.15         # 15% probability of sampling earlier stages
+  rehearsal_prob: 0.25         # 25% probability of sampling earlier stages
+  max_episodes_per_stage: 1500 # Safety floor so RL never stalls permanently in one stage
 
 stages:
   0:
     name: "STAGE_0_AIM_SHOOT"
-    description: "Single room, one enemy. Learn turning, aiming, and firing."
+    description: "Single room, one enemy. Learn turning, aiming, and finite-ammo firing."
     god_mode: false
-    infinite_ammo: true
+    infinite_ammo: false
     auto_open_doors: false
     num_rooms: 1
     difficulty: 0.1
@@ -24,7 +25,7 @@ stages:
     infinite_ammo: false
     auto_open_doors: false
     num_rooms: 2
-    difficulty: 0.5
+    difficulty: 0.30
 
   2:
     name: "STAGE_2_NAV_AUTO_DOORS"
