@@ -211,7 +211,11 @@ def train(
     )
 
     steps_per_update = ppo_cfg.rollout_len * num_envs
-    total_updates = max(1, (total_steps + steps_per_update - 1) // steps_per_update)
+    remaining_steps = max(0, total_steps - global_step)
+    remaining_updates = (remaining_steps + steps_per_update - 1) // steps_per_update
+    if start_update == 0:
+        remaining_updates = max(1, remaining_updates)
+    total_updates = start_update + remaining_updates
 
     obs_list = vec_env.reset()
     state = policy.init_state(num_envs, device=device)

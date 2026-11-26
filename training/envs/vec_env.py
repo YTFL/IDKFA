@@ -7,9 +7,11 @@ and training-only auxiliary targets (never passed to the policy).
 
 from __future__ import annotations
 
+import dataclasses
 import math
 import multiprocessing as mp
 import os
+import shutil
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -338,6 +340,10 @@ class DummyVecEnv:
 
     def __init__(self, num_envs: int, cfg: WorkerConfig) -> None:
         self.num_envs = num_envs
+        self._owned_cache_root: str | None = None
+        if cfg.cache_root is None:
+            self._owned_cache_root = tempfile.mkdtemp(prefix="nordlicht_vec_")
+            cfg = dataclasses.replace(cfg, cache_root=self._owned_cache_root)
         self.workers = [_SingleDoomWorker(i, cfg) for i in range(num_envs)]
 
     def reset(self) -> list[ProcessedObservation]:
@@ -354,6 +360,9 @@ class DummyVecEnv:
     def close(self) -> None:
         for w in self.workers:
             w.close()
+        if self._owned_cache_root is not None:
+            shutil.rmtree(self._owned_cache_root, ignore_errors=True)
+            self._owned_cache_root = None
 
 
 class SubprocVecEnv:
@@ -361,6 +370,10 @@ class SubprocVecEnv:
 
     def __init__(self, num_envs: int, cfg: WorkerConfig) -> None:
         self.num_envs = num_envs
+        self._owned_cache_root: str | None = None
+        if cfg.cache_root is None:
+            self._owned_cache_root = tempfile.mkdtemp(prefix="nordlicht_vec_")
+            cfg = dataclasses.replace(cfg, cache_root=self._owned_cache_root)
         ctx = mp.get_context("spawn")
         self._remotes: list[Any] = []
         self._work_remotes: list[Any] = []
@@ -412,6 +425,9 @@ class SubprocVecEnv:
             proc.join(timeout=5.0)
             if proc.is_alive():
                 proc.terminate()
+        if self._owned_cache_root is not None:
+            shutil.rmtree(self._owned_cache_root, ignore_errors=True)
+            self._owned_cache_root = None
 
 
 def _collate_worker_results(results: list[tuple[Any, ...]]) -> VecEnvStep:
