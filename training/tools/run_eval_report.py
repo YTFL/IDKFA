@@ -123,6 +123,7 @@ def main() -> None:
         device=dev,
         deterministic=args.temperature <= 0.0,
         temperature=args.temperature,
+        verbose=True,
     )
 
     gen_rows: list[dict[str, Any]] = []

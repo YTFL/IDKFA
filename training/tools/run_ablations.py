@@ -52,6 +52,7 @@ def run_inference_ablations(
     base_score: float | None = None
 
     for name, flags in ABLATION_CASES.items():
+        print(f"  -> Ablation [{name}]...", flush=True)
         rep = evaluate_on_manifest(
             policy=policy,
             preprocessor=prep,
@@ -63,6 +64,7 @@ def run_inference_ablations(
             deterministic=temperature <= 0.0,
             temperature=temperature,
             ablations=flags,
+            verbose=True,
         )
         if base_score is None:
             base_score = rep["weighted_score"]

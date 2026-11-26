@@ -8,10 +8,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
@@ -40,6 +42,44 @@ DEFAULT_TIER_TICKS: dict[str, int] = {
     "keycard_puzzle": 4200,
     "full_gauntlet": 4200,
 }
+
+_WORKER_POLICY: EMLRPPolicy | None = None
+_WORKER_PREP: ObservationPreprocessor | None = None
+_WORKER_DEVICE: str = "cpu"
+
+
+def _init_eval_worker(
+    model_cfg_dict: dict[str, Any],
+    state_dict_cpu: dict[str, Any],
+    prep_cfg_dict: dict[str, Any],
+    device_str: str,
+) -> None:
+    global _WORKER_POLICY, _WORKER_PREP, _WORKER_DEVICE
+    torch.set_num_threads(1)
+    _WORKER_DEVICE = device_str
+    policy = EMLRPPolicy(EMLRPConfig(**model_cfg_dict)).to(device_str)
+    policy.load_state_dict(state_dict_cpu)
+    policy.eval()
+    _WORKER_POLICY = policy
+    _WORKER_PREP = ObservationPreprocessor.from_config(prep_cfg_dict)
+
+
+def _run_eval_task(task: tuple[int, str, str, int, int, bool, float, AblationFlags | None]) -> tuple[int, str, dict[str, Any]]:
+    task_idx, family, wad_path_str, ep_ticks, ep_seed, deterministic, temperature, ablations = task
+    assert _WORKER_POLICY is not None and _WORKER_PREP is not None
+    res = score_episode(
+        policy=_WORKER_POLICY,
+        preprocessor=_WORKER_PREP,
+        wad_path=wad_path_str,
+        episode_ticks=ep_ticks,
+        seed=ep_seed,
+        device=_WORKER_DEVICE,
+        deterministic=deterministic,
+        temperature=temperature,
+        ablations=ablations,
+    )
+    res["family"] = family
+    return task_idx, family, res
 
 
 def score_episode(
@@ -249,6 +289,8 @@ def evaluate_on_manifest(
     seeds: Sequence[int] | None = None,
     tier_ticks: Mapping[str, int] | None = None,
     ablations: AblationFlags | None = None,
+    verbose: bool = False,
+    workers: int | None = None,
 ) -> dict[str, Any]:
     """Evaluate across held-out validation maps (optionally multi-seed) and compute tier-weighted score."""
     m_path = Path(manifest_path)
@@ -261,41 +303,104 @@ def evaluate_on_manifest(
         by_tier[entry["family"]].append(entry)
 
     seed_list = [int(s) for s in seeds] if seeds is not None else None
-    tier_results: dict[str, dict[str, float]] = {}
-    weighted_total = 0.0
-    weighted_var = 0.0
+    tasks: list[tuple[int, str, str, int, int, bool, float, AblationFlags | None]] = []
+    tier_ep_ticks: dict[str, int] = {}
+    for family, entries in sorted(by_tier.items()):
+        subset = entries[:max_maps_per_tier] if max_maps_per_tier is not None else entries
+        ep_ticks = int(tier_ticks.get(family, episode_ticks)) if tier_ticks is not None else int(episode_ticks)
+        tier_ep_ticks[family] = ep_ticks
+        for idx, entry in enumerate(subset):
+            wad_path = dataset_root / entry["file"]
+            ep_seeds = [s + idx for s in seed_list] if seed_list is not None else [seed + idx]
+            for ep_seed in ep_seeds:
+                tasks.append(
+                    (
+                        len(tasks),
+                        family,
+                        str(wad_path),
+                        ep_ticks,
+                        ep_seed,
+                        deterministic,
+                        temperature,
+                        ablations,
+                    )
+                )
+
+    total_episodes = len(tasks)
+    if workers is None:
+        workers = int(os.environ.get("NORDLICHT_EVAL_WORKERS", str(min(8, os.cpu_count() or 1))))
+    n_workers = max(1, min(int(workers), total_episodes)) if total_episodes > 0 else 1
+
+    ordered_results: list[tuple[str, dict[str, Any]] | None] = [None] * total_episodes
+    if n_workers > 1 and total_episodes >= 8:
+        model_cfg_dict = dict(vars(policy.config))
+        state_dict_cpu = {k: v.detach().cpu() for k, v in policy.state_dict().items()}
+        prep_cfg_dict = preprocessor.to_config() if hasattr(preprocessor, "to_config") else {}
+        device_str = str(device)
+        completed_episodes = 0
+        with ProcessPoolExecutor(
+            max_workers=n_workers,
+            initializer=_init_eval_worker,
+            initargs=(model_cfg_dict, state_dict_cpu, prep_cfg_dict, device_str),
+        ) as pool:
+            futures = [pool.submit(_run_eval_task, t) for t in tasks]
+            for fut in as_completed(futures):
+                task_idx, family, res = fut.result()
+                ordered_results[task_idx] = (family, res)
+                completed_episodes += 1
+                if verbose:
+                    print(
+                        f"    [{completed_episodes:3d}/{total_episodes:3d}] {family} | {res['wad']} "
+                        f"| seed={res['seed']} | score={res['score']:6.2f} | exit={int(res['exit_reached'])} "
+                        f"| kills={int(res['kills'])} | {res['mean_ms']:.2f}ms/step",
+                        flush=True,
+                    )
+    else:
+        for completed_episodes, task in enumerate(tasks, start=1):
+            task_idx, family, wad_path_str, ep_ticks, ep_seed, det, temp, abl = task
+            res = score_episode(
+                policy=policy,
+                preprocessor=preprocessor,
+                wad_path=wad_path_str,
+                episode_ticks=ep_ticks,
+                seed=ep_seed,
+                device=device,
+                deterministic=det,
+                temperature=temp,
+                ablations=abl,
+            )
+            res["family"] = family
+            ordered_results[task_idx] = (family, res)
+            if verbose:
+                print(
+                    f"    [{completed_episodes:3d}/{total_episodes:3d}] {family} | {res['wad']} "
+                    f"| seed={ep_seed} | score={res['score']:6.2f} | exit={int(res['exit_reached'])} "
+                    f"| kills={int(res['kills'])} | {res['mean_ms']:.2f}ms/step",
+                    flush=True,
+                )
+
+    by_tier_metrics: dict[str, list[dict[str, Any]]] = defaultdict(list)
     all_means: list[float] = []
     all_p50s: list[float] = []
     all_p99s: list[float] = []
     all_maxs: list[float] = []
     all_episodes: list[dict[str, Any]] = []
+    for item in ordered_results:
+        assert item is not None
+        family, res = item
+        by_tier_metrics[family].append(res)
+        all_episodes.append(res)
+        all_means.append(res["mean_ms"])
+        all_p50s.append(res["p50_ms"])
+        all_p99s.append(res["p99_ms"])
+        all_maxs.append(res["max_ms"])
 
-    for family, entries in sorted(by_tier.items()):
-        subset = entries[:max_maps_per_tier] if max_maps_per_tier is not None else entries
-        ep_ticks = int(tier_ticks.get(family, episode_ticks)) if tier_ticks is not None else int(episode_ticks)
-        ep_metrics: list[dict[str, Any]] = []
-        for idx, entry in enumerate(subset):
-            wad_path = dataset_root / entry["file"]
-            ep_seeds = [s + idx for s in seed_list] if seed_list is not None else [seed + idx]
-            for ep_seed in ep_seeds:
-                res = score_episode(
-                    policy=policy,
-                    preprocessor=preprocessor,
-                    wad_path=wad_path,
-                    episode_ticks=ep_ticks,
-                    seed=ep_seed,
-                    device=device,
-                    deterministic=deterministic,
-                    temperature=temperature,
-                    ablations=ablations,
-                )
-                res["family"] = family
-                ep_metrics.append(res)
-                all_episodes.append(res)
-                all_means.append(res["mean_ms"])
-                all_p50s.append(res["p50_ms"])
-                all_p99s.append(res["p99_ms"])
-                all_maxs.append(res["max_ms"])
+    tier_results: dict[str, dict[str, float]] = {}
+    weighted_total = 0.0
+    weighted_var = 0.0
+    for family in sorted(by_tier.keys()):
+        ep_metrics = by_tier_metrics[family]
+        ep_ticks = tier_ep_ticks[family]
 
         scores = [m["score"] for m in ep_metrics]
         mean_score = float(np.mean(scores)) if scores else 0.0
