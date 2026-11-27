@@ -69,8 +69,9 @@ class DoomDashboard:
             self.surface = pygame.Surface((self.width, self.height))
             self.screen = None
         else:
-            self.screen = pygame.display.set_mode((self.width, self.height))
+            self.screen = pygame.display.set_mode((self.width, self.height), pygame.SHOWN)
             pygame.display.set_caption(title)
+            pygame.event.pump()
             self.surface = self.screen
 
         # Fonts
@@ -169,6 +170,7 @@ class DoomDashboard:
 
         if not self.headless:
             pygame.display.flip()
+            pygame.event.pump()
 
         # Convert surface to (H, W, 3) numpy array
         view = pygame.surfarray.array3d(self.surface)
@@ -414,6 +416,60 @@ class DoomDashboard:
             pygame.draw.rect(self.surface, (50, 55, 68), rect, width=1, border_radius=4)
         lbl = self.font_small.render(label, True, fg)
         self.surface.blit(lbl, (x + 8, y + 4))
+
+    def render_end_screen(self, outcome: str, summary: Mapping[str, Any]) -> np.ndarray:
+        """Render a crisp Game Over / Level Cleared / Track Constraint overlay at episode end."""
+        overlay = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
+        overlay.fill((10, 12, 18, 200))
+        self.surface.blit(overlay, (0, 0))
+
+        box = pygame.Rect(self.width // 2 - 330, self.height // 2 - 190, 660, 380)
+        pygame.draw.rect(self.surface, COLOR_PANEL, box, border_radius=12)
+
+        titles = {
+            "exit_reached": ("LEVEL CLEARED - EXIT REACHED", COLOR_GREEN),
+            "dead": ("YOU DIED - GAME OVER", COLOR_RED),
+            "tick_cap": ("TIME LIMIT REACHED (TICK CAP)", COLOR_YELLOW),
+            "constraint_violation": ("TRACK CONSTRAINT VIOLATED", COLOR_RED),
+            "user_quit": ("SESSION ENDED BY USER", COLOR_TEXT_DIM),
+        }
+        headline, accent = titles.get(outcome, (f"ENDED: {outcome.upper()}", COLOR_ACCENT))
+        pygame.draw.rect(self.surface, accent, box, width=2, border_radius=12)
+
+        banner_font = pygame.font.SysFont("monospace", 24, bold=True)
+        lbl_head = banner_font.render(headline, True, accent)
+        self.surface.blit(lbl_head, (box.centerx - lbl_head.get_width() // 2, box.y + 22))
+
+        c_info = summary.get("constraints", {})
+        c_pass = bool(summary.get("all_constraints_passed", True))
+        rows = [
+            ("MAP", f"{summary.get('wad_path', '')} ({summary.get('map_name', 'MAP01')})", COLOR_TEXT),
+            ("STEPS / KILLS / CELLS", f"{summary.get('steps', 0)} steps | {summary.get('kills', 0)} kills | {summary.get('unique_cells', 0)} cells", COLOR_TEXT),
+            ("KEYS / SHAPED REWARD", f"{summary.get('keys_collected', 0)} keys | reward={summary.get('total_shaped_reward', 0.0):+.2f}", COLOR_TEXT),
+            ("BOOT __init__() / reset()", f"{summary.get('init_ms', 0.0):.1f} ms / 60000 ms  |  {summary.get('reset_ms', 0.0):.1f} ms / 10000 ms", COLOR_GREEN if c_info.get('init', {}).get('passed', True) and c_info.get('reset', {}).get('passed', True) else COLOR_RED),
+            ("FIRST act() / MAX SUB act()", f"{summary.get('first_act_ms', 0.0):.2f} ms / 10000 ms  |  {summary.get('max_subsequent_act_ms', 0.0):.2f} ms / 5000 ms", COLOR_GREEN if c_info.get('first_act', {}).get('passed', True) and c_info.get('subsequent_act', {}).get('passed', True) else COLOR_RED),
+            ("AVG DECISION BUDGET", f"{summary.get('mean_latency_ms', 0.0):.2f} ms / 40.0 ms  (p99={summary.get('p99_latency_ms', 0.0):.2f} ms)", COLOR_GREEN if c_info.get('avg_budget', {}).get('passed', True) else COLOR_RED),
+            ("PEAK RAM / PEAK VRAM", f"{summary.get('peak_ram_mb', 0.0):.1f} MB / 8192 MB  |  {summary.get('peak_vram_mb', 0.0):.1f} MB / 2048 MB", COLOR_TEXT),
+            ("TRACK CONSTRAINTS", "ALL PASSED" if c_pass else f"VIOLATIONS: {', '.join(summary.get('constraint_violations', []))}", COLOR_GREEN if c_pass else COLOR_RED),
+        ]
+
+        y = box.y + 74
+        for key, val, col in rows:
+            lbl_k = self.font_bold.render(f"{key:<24}:", True, COLOR_TEXT_DIM)
+            lbl_v = self.font_main.render(val, True, col)
+            self.surface.blit(lbl_k, (box.x + 24, y))
+            self.surface.blit(lbl_v, (box.x + 230, y))
+            y += 30
+
+        footer = self.font_bold.render("Press R to Restart  |  ESC or Q to Exit", True, COLOR_ACCENT)
+        self.surface.blit(footer, (box.centerx - footer.get_width() // 2, box.bottom - 38))
+
+        if not self.headless:
+            pygame.display.flip()
+            pygame.event.pump()
+
+        arr = pygame.surfarray.array3d(self.surface)
+        return np.transpose(arr, (1, 0, 2)).copy()
 
     def close(self) -> None:
         pygame.quit()

@@ -99,6 +99,7 @@ class ShapedRewardEnv(gym.Wrapper):
 
         self.total_episode_reward += final_reward
         info["reward_breakdown"] = breakdown.to_dict()
+        info["unique_cells_visited"] = len(self.reward_shaper.visited_cells)
         info["shaped_reward"] = final_reward
         info["total_episode_reward"] = self.total_episode_reward
 
