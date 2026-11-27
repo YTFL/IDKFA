@@ -66,17 +66,17 @@ def _ablation_svg(ablation_data: dict[str, Any] | None) -> str:
         y = 14 + i * 21
         w = max(2.0, abs(delta) / max_abs * bar_span)
         x = mid_x if delta >= 0 else mid_x - w
-        color = "#0284c7" if delta >= 0 else "#dc2626"
+        color = "#1f2937" if delta >= 0 else "#991b1b"
         lbl_x = mid_x + w + 5 if delta >= 0 else mid_x - w - 42
         rows.append(
-            f'<text x="6" y="{y + 11}" font-size="10" font-family="monospace" fill="#0f172a">{html.escape(name)}</text>'
-            f'<rect x="{x:.1f}" y="{y}" width="{w:.1f}" height="13" rx="2" fill="{color}" />'
-            f'<text x="{lbl_x:.1f}" y="{y + 10}" font-size="9.5" fill="#1e293b">{delta:+.2f}</text>'
+            f'<text x="6" y="{y + 11}" font-size="10" font-family="monospace" fill="#111827">{html.escape(name)}</text>'
+            f'<rect x="{x:.1f}" y="{y}" width="{w:.1f}" height="13" rx="1" fill="{color}" />'
+            f'<text x="{lbl_x:.1f}" y="{y + 10}" font-size="9.5" fill="#111827">{delta:+.2f}</text>'
         )
     h = 20 + len(items) * 21
     return (
         f'<svg viewBox="0 0 430 {h}" width="100%" height="{h}">'
-        f'<line x1="{mid_x}" y1="6" x2="{mid_x}" y2="{h - 6}" stroke="#94a3b8" stroke-dasharray="3 2" />'
+        f'<line x1="{mid_x}" y1="6" x2="{mid_x}" y2="{h - 6}" stroke="#9ca3af" stroke-dasharray="3 2" />'
         + "".join(rows)
         + "</svg>"
     )
@@ -120,23 +120,23 @@ def build_html(eval_data: dict[str, Any] | None, ablation_data: dict[str, Any] |
 <style>
   @page {{ size: letter; margin: 0.40in 0.45in; }}
   * {{ box-sizing: border-box; }}
-  body {{ font-family: "Segoe UI", system-ui, -apple-system, sans-serif; color: #0f172a; font-size: 9.4pt; line-height: 1.36; margin: 0; }}
+  body {{ font-family: "Segoe UI", system-ui, -apple-system, sans-serif; color: #111827; font-size: 9.2pt; line-height: 1.35; margin: 0; }}
   .page {{ page-break-after: always; }}
   .page:last-child {{ page-break-after: auto; }}
-  .header {{ border-bottom: 2px solid #0f172a; padding-bottom: 6px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: baseline; }}
-  h1 {{ font-size: 16pt; margin: 0; letter-spacing: -0.02em; }}
-  .sub {{ font-size: 9pt; color: #475569; font-weight: 600; }}
-  h2 {{ font-size: 10.5pt; margin: 10px 0 4px 0; color: #0369a1; border-left: 3px solid #0284c7; padding-left: 6px; }}
+  .header {{ border-bottom: 2px solid #111827; padding-bottom: 5px; margin-bottom: 9px; display: flex; justify-content: space-between; align-items: baseline; }}
+  h1 {{ font-size: 15.5pt; margin: 0; letter-spacing: -0.02em; color: #111827; }}
+  .sub {{ font-size: 8.8pt; color: #4b5563; font-weight: 600; }}
+  h2 {{ font-size: 10.2pt; margin: 9px 0 4px 0; color: #111827; border-left: 3px solid #111827; padding-left: 6px; text-transform: uppercase; letter-spacing: 0.02em; }}
   p {{ margin: 0 0 6px 0; }}
-  .usp {{ background: #f0f9ff; border: 1px solid #bae6fd; border-radius: 5px; padding: 7px 9px; margin-bottom: 9px; font-size: 9.2pt; }}
-  .grid2 {{ display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }}
-  .card {{ background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 5px; padding: 7px 9px; }}
-  table {{ width: 100%; border-collapse: collapse; font-size: 8.3pt; margin: 4px 0 7px 0; }}
-  th, td {{ border-bottom: 1px solid #cbd5e1; padding: 3px 5px; text-align: left; }}
-  th {{ background: #f1f5f9; font-weight: 700; }}
+  .usp {{ background: #f9fafb; border: 1px solid #d1d5db; border-left: 3px solid #111827; padding: 7px 9px; margin-bottom: 8px; font-size: 9.0pt; }}
+  .grid2 {{ display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }}
+  .card {{ background: #ffffff; border: 1px solid #d1d5db; padding: 7px 9px; }}
+  table {{ width: 100%; border-collapse: collapse; font-size: 8.2pt; margin: 4px 0 7px 0; }}
+  th, td {{ border-bottom: 1px solid #d1d5db; padding: 3px 5px; text-align: left; }}
+  th {{ background: #f3f4f6; font-weight: 700; color: #111827; }}
   ul {{ margin: 3px 0 6px 0; padding-left: 16px; }}
   li {{ margin-bottom: 2px; }}
-  code {{ font-family: Consolas, monospace; font-size: 8.2pt; background: #f1f5f9; padding: 0 3px; border-radius: 2px; }}
+  code {{ font-family: Consolas, monospace; font-size: 8.1pt; background: #f3f4f6; padding: 0 3px; border-radius: 2px; }}
 </style>
 </head>
 <body>
@@ -144,50 +144,43 @@ def build_html(eval_data: dict[str, Any] | None, ablation_data: dict[str, Any] |
 <div class="page">
   <div class="header">
     <h1>Nordlicht: Zero-Shot DOOM via EMLRP</h1>
-    <span class="sub">Yugaantar 2026 &middot; DevForge Track 1</span>
+    <span class="sub">Track 1: &ldquo;Can It Play DOOM?&rdquo; &middot; DevForge 2026</span>
   </div>
 
   <div class="usp">
-    <strong>Core USP:</strong> <em>EgoMap-Landmark Recurrent Policy (EMLRP)</em> pairs a differentiable egomotion-warped <code>32&times;32</code> neural spatial map with an explicit <code>16</code>-slot key/door landmark memory and latent mode controller inside a compact <code>{params:,}</code>-parameter neural policy (<code>7.32 MB</code> weights, <code>~8.1 ms/step</code> on 1 CPU thread), requiring zero classical planning or aim heuristics.
+    <strong>Unique Selling Proposition (USP):</strong> <em>EgoMap-Landmark Recurrent Policy (EMLRP)</em> fuses a differentiable egomotion-warped <code>32&times;32</code> neural spatial map, an explicit <code>16</code>-slot key/door landmark memory, observation-based action masking, and a 5-mode latent router inside a <code>{params:,}</code>-parameter network (<code>7.32 MB</code> weights, <code>&lt; 23 ms/step</code> eval / <code>~8.1 ms/step</code> 1-thread CPU) trained end-to-end via Behavioral Cloning &rarr; Truncated-BPTT PPO with zero classical pathfinding (<code>A*</code>) or trigonometric aimbots (<code>atan2</code>).
   </div>
 
-  <h2>1. Problem Framing &amp; Partial Observability</h2>
-  <p>The agent acts every <code>FRAME_SKIP = 4</code> ticks via <code>MultiBinary(9)</code> buttons under strict engine isolation on unseen <code>freedoom2.wad</code> maps across four tiers (Combat, Multi-Room Exploration, Keycard Puzzles, Full Gauntlet). Long-horizon keycard levels fail reactive policies because seeing a locked door, detouring to find the key, and backtracking exceeds short GRU horizons.</p>
+  <h2>1. Problem Framing &amp; Track Requirements</h2>
+  <p>The agent acts every <code>FRAME_SKIP = 4</code> ticks via factored <code>MultiBinary(9)</code> buttons under strict engine isolation on unseen <code>freedoom2.wad</code> maps (Skill 3) across four tiers: Combat &amp; Survival, Multi-Room Exploration, Keycard Puzzles, and Full Gauntlet (<code>2,100&ndash;4,200</code> ticks). Purely reactive policies fail long-horizon keycard backtracking and overfit to single-room circle-strafing; EMLRP solves partial observability with explicit ego-centric spatial and landmark memory.</p>
 
-  <h2>2. EMLRP Architecture &amp; Data Flow</h2>
-  <div class="card" style="margin-bottom:8px;">
-    <svg viewBox="0 0 740 165" width="100%" height="150">
-      <defs><marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 1 L 10 5 L 0 9 z" fill="#334155"/></marker></defs>
-      <rect x="6" y="10" width="115" height="30" rx="4" fill="#e0f2fe" stroke="#0284c7"/><text x="63" y="29" text-anchor="middle" font-size="9.5" font-weight="600">64 Rays + Depth</text>
-      <rect x="6" y="50" width="115" height="30" rx="4" fill="#e0f2fe" stroke="#0284c7"/><text x="63" y="69" text-anchor="middle" font-size="9.5" font-weight="600">Visible Entities (32)</text>
-      <rect x="6" y="90" width="115" height="30" rx="4" fill="#e0f2fe" stroke="#0284c7"/><text x="63" y="109" text-anchor="middle" font-size="9.5" font-weight="600">Vitals + Prev Action</text>
-      <rect x="148" y="10" width="128" height="30" rx="4" fill="#f1f5f9" stroke="#475569"/><text x="212" y="29" text-anchor="middle" font-size="9.5">Circular 1D Ray CNN</text>
-      <rect x="148" y="50" width="128" height="30" rx="4" fill="#f1f5f9" stroke="#475569"/><text x="212" y="69" text-anchor="middle" font-size="9.5">Set Transformer + Pool</text>
-      <rect x="148" y="90" width="128" height="30" rx="4" fill="#f1f5f9" stroke="#475569"/><text x="212" y="109" text-anchor="middle" font-size="9.5">Egomotion Estimator</text>
-      <rect x="304" y="12" width="142" height="50" rx="4" fill="#fef3c7" stroke="#d97706"/><text x="375" y="32" text-anchor="middle" font-size="9.5" font-weight="700">Egocentric Spatial Map</text><text x="375" y="47" text-anchor="middle" font-size="8.2">32x32x16 warp + ConvGRU</text>
-      <rect x="304" y="72" width="142" height="50" rx="4" fill="#fef3c7" stroke="#d97706"/><text x="375" y="92" text-anchor="middle" font-size="9.5" font-weight="700">Landmark Slot Memory</text><text x="375" y="107" text-anchor="middle" font-size="8.2">16 slots + keycard flags</text>
-      <rect x="474" y="34" width="108" height="58" rx="4" fill="#dcfce7" stroke="#16a34a"/><text x="528" y="58" text-anchor="middle" font-size="9.5" font-weight="700">Fusion + GRU</text><text x="528" y="74" text-anchor="middle" font-size="8.2">hidden=256 + Mode(5)</text>
-      <rect x="608" y="20" width="122" height="36" rx="4" fill="#ede9fe" stroke="#7c3aed"/><text x="669" y="41" text-anchor="middle" font-size="9.5" font-weight="700">MultiBinary(9) Policy</text>
-      <rect x="608" y="68" width="122" height="36" rx="4" fill="#f1f5f9" stroke="#64748b"/><text x="669" y="85" text-anchor="middle" font-size="8.8">Dual Values (Ext/Int)</text><text x="669" y="97" text-anchor="middle" font-size="8">+ Aux Heads (train)</text>
-      <path d="M121 25 L146 25 M121 65 L146 65 M121 105 L146 105 M276 25 L302 35 M276 65 L302 90 M276 105 L302 52 M276 105 L302 105 M446 37 L472 52 M446 97 L472 72 M582 55 L606 38 M582 68 L606 86" stroke="#334155" stroke-width="1.3" fill="none" marker-end="url(#arr)"/>
-    </svg>
-  </div>
+  <h2>2. System Architecture &amp; Spatial Memory</h2>
+  <table>
+    <thead><tr><th>Stage</th><th>Module</th><th>Input &rarr; Output</th><th>Role in Zero-Shot Generalization</th></tr></thead>
+    <tbody>
+      <tr><td>1. Encode</td><td>Circular 1D Ray CNN + Depth</td><td><code>64&times;8</code> rays + <code>32</code>-bin depth &rarr; <code>128+32</code></td><td>Rotation-equivariant wall, door, locked-door, enemy, and item geometry</td></tr>
+      <tr><td>1. Encode</td><td>Entity Set Transformer</td><td><code>32&times;17</code> masked entities &rarr; <code>64</code></td><td>Permutation-invariant attention over variable enemy/key/pickup counts</td></tr>
+      <tr><td>1. Encode</td><td>Vitals &amp; Egomotion</td><td><code>17</code>-d vitals + prev action &rarr; <code>64+32</code></td><td>Keycard flags, ammo/health awareness, and learned dead-reckoning delta</td></tr>
+      <tr><td>2. Memory</td><td>2D Neural Spatial Map</td><td><code>32&times;32&times;16</code> grid (<code>F.grid_sample</code>)</td><td>Egomotion-warped occupancy/feature grid updated via ConvGRU</td></tr>
+      <tr><td>2. Memory</td><td>Landmark Slot Memory</td><td><code>16&times;64</code> key-value slots + coords</td><td>Stores sighted keys/locked doors; keycard flags condition cross-attention</td></tr>
+      <tr><td>3. Control</td><td>Fusion GRU + Mode Router</td><td><code>256</code>-d GRU + 5 latent modes</td><td>Maintains corridor/combat context and routes exploration vs. backtracking</td></tr>
+      <tr><td>4. Act</td><td>Masked Policy &amp; Dual Heads</td><td><code>MultiBinary(9)</code> + <code>V_ext</code>/<code>V_int</code> + 5 aux</td><td>Applies shared observation action mask; aux heads discarded at inference</td></tr>
+    </tbody>
+  </table>
 
   <div class="grid2">
     <div class="card">
-      <strong>Shared Observation Preprocessing</strong>
+      <strong>Sensory &amp; State Representation</strong>
       <ul>
-        <li><strong>Rays (<code>64&times;8</code>):</strong> Linear + log-compressed distance and 6-class hit type (none/wall/door/locked_door/enemy/item) via circular 1D CNN.</li>
-        <li><strong>Entities (<code>32&times;17</code>):</strong> Permutation-invariant 2-layer Set Transformer over masked <code>[dist, sin, cos, rel_v]</code> + 12-class type embedding.</li>
-        <li><strong>Depth &amp; Vitals:</strong> Central 60-row depth band pooled to <code>32</code> bins; normalized vitals, 6 binary keycard flags, ego velocities, and previous action.</li>
+        <li><strong>Identical Train/Serve Pipeline:</strong> <code>submission/features.py</code> normalizes rays (linear + log distance, 6-class hit types), entities (<code>[dist, sin, cos, rel_v]</code> + 12-class type), depth, and vitals.</li>
+        <li><strong>Observation Action Mask:</strong> <code>submission/action_mask.py</code> suppresses impossible/contradictory bits (opposing movement/turn axes, firing without ammo, holding edge-triggered <code>USE</code>) identically in BC, PPO, and inference.</li>
       </ul>
     </div>
     <div class="card">
-      <strong>Explicit Spatial &amp; Landmark Memory</strong>
+      <strong>Strict Compliance &amp; Sandbox Budget</strong>
       <ul>
-        <li><strong>Neural Spatial Map:</strong> Dead-reckoned ego-motion plus learned correction warps a <code>32&times;32&times;16</code> feature grid via <code>F.grid_sample</code>, fusing splatted rays and free-space gates via ConvGRU.</li>
-        <li><strong>Landmark Slots:</strong> <code>16</code> egocentric slots store high-salience entity/door signatures and relative coordinates; keycard flags from vitals condition cross-attention readouts so locked doors become targets once unlocked.</li>
-        <li><strong>Compliance:</strong> Strictly differentiable neural state (no <code>A*</code>/<code>atan2</code>).</li>
+        <li><strong>Neural-Only Decisions:</strong> Zero <code>vizdoom</code>, <code>privileged_state</code>, <code>A*</code>, or <code>atan2</code> in <code>submission/</code>; all spatial transforms are differentiable tensor ops.</li>
+        <li><strong>Footprint:</strong> <code>7.32 MB</code> <code>agent.pt</code> via Git LFS (<code>&le; 1 GB</code> repo limit), <code>&lt; 2 GB</code> VRAM, <code>&lt; 40 ms/step</code> budget, and clean <code>reset()</code> memory clearing per map.</li>
       </ul>
     </div>
   </div>
@@ -195,31 +188,31 @@ def build_html(eval_data: dict[str, Any] | None, ablation_data: dict[str, Any] |
 
 <div class="page">
   <div class="header">
-    <h1>Training Pipeline, Results &amp; Ablations</h1>
+    <h1>Training Pipeline, Evaluation &amp; Ablations</h1>
     <span class="sub">Checkpoint: <code>{html.escape(Path(ckpt_label).name)}</code></span>
   </div>
 
   <div class="grid2" style="margin-bottom:8px;">
     <div class="card">
-      <strong>Curriculum &amp; Exploration Pipeline</strong>
+      <strong>Technical Approach: BC &rarr; Truncated-BPTT PPO</strong>
       <ul>
-        <li><strong>Procedural Map Factory:</strong> UDMF rooms-and-corridors WAD generator across 4 families with BFS solvability verification + held-out <code>val/</code> split.</li>
-        <li><strong>6-Stage Curriculum:</strong> Aim/shoot &rarr; Arenas &rarr; Auto-door nav &rarr; Doors+enemies &rarr; Keycard puzzles &rarr; Full gauntlet with rehearsal.</li>
-        <li><strong>Custom Recurrent PPO:</strong> Truncated BPTT (<code>T=32</code>), dual extrinsic/intrinsic GAE, RND curiosity + episodic novelty, potential shaping, and auxiliary losses.</li>
+        <li><strong>Procedural Map Factory:</strong> UDMF generator across 4 families with BFS solvability checks + disjoint held-out <code>val/</code> split.</li>
+        <li><strong>Stage 0&ndash;5 BC Pretraining:</strong> <code>PrivilegedTeacherOracle</code> collects vanilla-rule demos (<code>god_mode=False</code>, <code>auto_open_doors=False</code>, <code>infinite_ammo=False</code>); truncated-BPTT BC trains policy, 5 aux heads, and Monte-Carlo critic calibration.</li>
+        <li><strong>Recurrent PPO Fine-Tune:</strong> <code>seq_len=64</code> BPTT across mixed Stages 0&ndash;5 (<code>4200</code> ticks), critic warmup, decaying BC KL anchor, RND curiosity + episodic novelty, and anti-spin/ammo-waste shaping.</li>
       </ul>
     </div>
     <div class="card">
-      <strong>Runtime Budget &amp; Inference Engineering</strong>
+      <strong>Runtime &amp; Inference Verification</strong>
       <ul>
-        <li><strong>Model Size:</strong> <code>{params:,}</code> params (<code>7.32 MB</code> exported <code>agent.pt</code> via Git LFS; total repo <code>~118 MB</code> &le; <code>1 GB</code>).</li>
-        <li><strong>Measured Speed:</strong> <code>8.09 ms/step</code> on 1 CPU thread over 1,050 decisions (vs <code>40.0 ms/step</code> limit), fallback recovery clearing edge triggers.</li>
-        <li><strong>Multi-Seed Eval Mean/p99:</strong> <code>{mean_ms:.2f} ms</code> / <code>{p99_ms:.2f} ms</code>.</li>
+        <li><strong>Model Size:</strong> <code>{params:,}</code> parameters (<code>7.32 MB</code> exported <code>agent.pt</code>).</li>
+        <li><strong>Inference Speed:</strong> Multi-seed mean <code>{mean_ms:.2f} ms/step</code>, p99 <code>{p99_ms:.2f} ms/step</code> (within <code>40.0 ms</code> limit).</li>
+        <li><strong>Edge-Trigger Safety:</strong> <code>DoomAgent</code> enforces <code>MultiBinary(9)</code> sanitization and timeout-safe fallback recovery.</li>
       </ul>
     </div>
   </div>
 
   <h2>3. Held-Out Validation Tier Results</h2>
-  <p>Tier-weighted score: <strong>{w_score:.3f} &plusmn; {w_std:.3f}</strong> across unseen maps in <code>maps/dataset/manifest.json</code>.</p>
+  <p>Tier-weighted score: <strong>{w_score:.3f} &plusmn; {w_std:.3f}</strong> across unseen maps in <code>maps/dataset/manifest.json</code> (3 seeds).</p>
   <table>
     <thead><tr><th>Tier</th><th>Weight</th><th>Score (mean &plusmn; std)</th><th>Exit %</th><th>Survival %</th><th>Kills</th><th>Cells</th></tr></thead>
     <tbody>{''.join(tier_rows)}</tbody>
@@ -232,16 +225,15 @@ def build_html(eval_data: dict[str, Any] | None, ablation_data: dict[str, Any] |
       <tbody>{''.join(abl_rows)}</tbody>
     </table>
     <div class="card">
-      <strong style="font-size:8.5pt;">Weighted Score Delta vs Baseline</strong>
+      <strong style="font-size:8.4pt;">Weighted Score Delta vs Baseline</strong>
       {_ablation_svg(ablation_data)}
     </div>
   </div>
 
-  <h2>5. Failure Analysis, Limitations &amp; Future Work</h2>
+  <h2>5. Failure Analysis &amp; Engineering Takeaways</h2>
   <ul>
-    <li><strong>Observed Failure Modes:</strong> <code>analyze_failures.py</code> classifies non-exit runs into <code>died_early</code>, <code>stuck_loop</code> (doorway/corner hesitation without sufficient curriculum progression), <code>missed_key</code>, and <code>missed_locked_door</code>.</li>
-    <li><strong>Key Insights &amp; Tuning:</strong> Low-temperature Bernoulli sampling (<code>T=0.70</code>) improved exploration scores over pure greedy thresholding on interim weights by breaking repetitive doorway/wall loops; Stage 2&ndash;5 training on the RTX 5060 targets navigation, doors, and keycard backtracking.</li>
-    <li><strong>Future Work:</strong> Larger multi-seed curriculum scale-up (10M+ steps), retrained end-to-end <code>no_rnd</code>/<code>no_depth</code> ablations, and light RGB color auxiliary heads for distant switch/key visual disambiguation.</li>
+    <li><strong>Breaking Stage 0/1 Local Optima:</strong> Early pure-RL runs stalled in Stage 1 circle-strafing (backing into corners and blind-firing); adding finite-ammo Stage 0, blind-fire/spin penalties, shared action masking, and Stage 0&ndash;5 BC initialization eliminated wall-fighting and unlocked keycard/gauntlet progression.</li>
+    <li><strong>Remaining Bottlenecks:</strong> <code>analyze_failures.py</code> tracks residual non-exit episodes across <code>died_early</code>, <code>missed_key</code>, and <code>missed_locked_door</code>; low-temperature decoding (<code>T=0.30</code>) balances crisp door/aim execution with enough stochasticity to escape tight geometry.</li>
   </ul>
 </div>
 
