@@ -8,25 +8,32 @@ Implements the 6 curriculum stages from PLAN.md Phase 1:
   Stage 4: Keycard puzzle maps with vanilla rules.
   Stage 5: Full gauntlet mix (with 10-20% rehearsal of earlier stages).
 
-Includes dense reward shaping for training, visited-cell spatial exploration
-bonuses, and rolling success rate progression tracking.
+Reads stage parameters from training/configs/curriculum.yaml, uses edge-triggered
+auto_open_doors and real ViZDoom infinite_ammo/god_mode mods, and delegates dense
+reward shaping to ExtrinsicRewardShaper.
 """
 
 from __future__ import annotations
 
 import collections
 import enum
-import math
-from dataclasses import dataclass, field
+import tempfile
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import gymnasium as gym
 import numpy as np
 
 from doom_env import make_env
 from doom_env import spaces as S
+from doom_env.sensors import RAY_DOOR
 from training.mapgen.generator import MapFamily, ProceduralMapGenerator
+from training.rewards.shaping import ExtrinsicRewardShaper, RewardConfig
+
+DEFAULT_CURRICULUM_CONFIG_PATH = (
+    Path(__file__).resolve().parent.parent / "configs" / "curriculum.yaml"
+)
 
 
 class CurriculumStage(int, enum.Enum):
@@ -50,6 +57,19 @@ class RewardWeights:
     time_step: float = -0.001
     new_cell_explored: float = 0.02
 
+    def to_reward_config(self) -> RewardConfig:
+        return RewardConfig(
+            exit_reward=self.exit_reached,
+            key_reward=self.key_pickup,
+            door_reward=self.door_opened,
+            locked_door_reward=self.locked_door_unlocked,
+            cell_reward=self.new_cell_explored,
+            kill_reward=self.enemy_killed,
+            damage_penalty_per_hp=self.damage_taken_per_hp,
+            death_penalty=self.death,
+            step_penalty=self.time_step,
+        )
+
 
 @dataclass
 class CurriculumConfig:
@@ -62,10 +82,73 @@ class CurriculumConfig:
     auto_open_doors: bool = False
     render_buffers: bool = True
     cell_size: float = 64.0
+    num_rooms: int = 5
+    difficulty: float = 0.5
+
+
+def _parse_yaml_scalar(raw: str) -> Any:
+    val = raw.strip()
+    if (val.startswith('"') and val.endswith('"')) or (val.startswith("'") and val.endswith("'")):
+        return val[1:-1]
+    low = val.lower()
+    if low == "true":
+        return True
+    if low == "false":
+        return False
+    try:
+        return int(val)
+    except ValueError:
+        try:
+            return float(val)
+        except ValueError:
+            return val
+
+
+def load_curriculum_yaml(path: str | Path | None = None) -> dict[str, Any]:
+    """Load curriculum.yaml using PyYAML if installed, else a minimal stdlib YAML parser."""
+    cfg_path = Path(path) if path is not None else DEFAULT_CURRICULUM_CONFIG_PATH
+    if not cfg_path.is_file():
+        return {}
+    text = cfg_path.read_text(encoding="utf-8")
+    try:
+        import yaml  # type: ignore[import-not-found]
+
+        return yaml.safe_load(text) or {}
+    except ImportError:
+        pass
+
+    root: dict[str, Any] = {}
+    stack: list[tuple[int, dict[Any, Any]]] = [(-1, root)]
+    for raw_line in text.splitlines():
+        line = raw_line.split("#", 1)[0].rstrip()
+        if not line.strip():
+            continue
+        indent = len(line) - len(line.lstrip(" "))
+        stripped = line.strip()
+        if ":" not in stripped:
+            continue
+        key_raw, val_raw = stripped.split(":", 1)
+        key_str = key_raw.strip()
+        key: Any = int(key_str) if key_str.isdigit() else key_str
+
+        while len(stack) > 1 and indent <= stack[-1][0]:
+            stack.pop()
+        parent = stack[-1][1]
+
+        if not val_raw.strip():
+            child: dict[Any, Any] = {}
+            parent[key] = child
+            stack.append((indent, child))
+        else:
+            parent[key] = _parse_yaml_scalar(val_raw)
+    return root
 
 
 class CurriculumEnvWrapper(gym.Wrapper):
-    """Wraps DoomEnv to add curriculum reward shaping and training instrumentation."""
+    """Wraps DoomEnv with curriculum training mods and dense ExtrinsicRewardShaper."""
+
+    _USE_IDX = S.BUTTONS.index("USE")
+    _FRONT_RAY_INDICES = (61, 62, 63, 0, 1, 2, 3)
 
     def __init__(
         self,
@@ -79,100 +162,103 @@ class CurriculumEnvWrapper(gym.Wrapper):
         self.weights = reward_weights or RewardWeights()
         self.config = config or CurriculumConfig(stage=stage)
 
-        # Episodic state trackers
-        self.visited_cells: set[tuple[int, int]] = set()
-        self.last_health: float = 100.0
-        self.keys_held: set[int] = set()
+        reward_cfg = self.weights.to_reward_config()
+        reward_cfg.cell_size = self.config.cell_size
+        self.reward_shaper = ExtrinsicRewardShaper(reward_cfg)
+
         self.step_count: int = 0
         self.total_shaped_reward: float = 0.0
+        self._last_obs: dict[str, Any] | None = None
+        self._last_use_pressed: bool = False
+        self._door_cooldown: int = 0
+
+    def _send_game_cmd(self, cmd: str) -> None:
+        game = getattr(self.env.unwrapped, "_game", None)
+        if game is not None:
+            game.send_game_command(cmd)
 
     def reset(self, **kwargs):
         obs, info = self.env.reset(**kwargs)
-        self.visited_cells.clear()
+        self.reward_shaper.reset()
         self.step_count = 0
         self.total_shaped_reward = 0.0
-        self.keys_held.clear()
-        self.last_health = float(obs["vitals"][S.VITALS_INDEX["health"]])
+        self._last_obs = obs
+        self._last_use_pressed = False
+        self._door_cooldown = 0
 
-        # Apply training-only mods if configured
         if self.config.god_mode:
-            try:
-                self.env.unwrapped.game.send_game_command("god")
-            except Exception:
-                pass
+            self._send_game_cmd("god")
+        if self.config.infinite_ammo:
+            self._send_game_cmd("give Clip")
+            self._send_game_cmd("give Shell")
 
-        # Mark initial position as visited
         priv = self.env.unwrapped.privileged_state()
         if priv is not None:
             cx = int(priv["x"] // self.config.cell_size)
             cy = int(priv["y"] // self.config.cell_size)
-            self.visited_cells.add((cx, cy))
+            self.reward_shaper.visited_cells.add((cx, cy))
+            self.reward_shaper.last_health = float(priv.get("health", 100.0))
 
+        info["unique_cells_visited"] = len(self.reward_shaper.visited_cells)
         return obs, info
 
+    def _should_auto_open_door(self) -> bool:
+        if self._last_obs is None or self._last_use_pressed or self._door_cooldown > 0:
+            return False
+        rays = self._last_obs.get("rays")
+        if rays is None:
+            return False
+        dists = rays["distance"]
+        hits = rays["hit_type"]
+        for idx in self._FRONT_RAY_INDICES:
+            if int(hits[idx]) == RAY_DOOR and float(dists[idx]) * S.RAY_RANGE <= 96.0:
+                return True
+        return False
+
     def step(self, action: np.ndarray):
-        # Auto-open doors mod for navigation stages: press USE when encountering doors
+        act = np.asarray(action).copy()
+
+        # Edge-triggered auto_open_doors mod for navigation pretraining
         if self.config.auto_open_doors or self.stage == CurriculumStage.STAGE_2_NAV_AUTO_DOORS:
-            # If front rays detect door, trigger USE button automatically
-            front_ray_hits = self.env.unwrapped.privileged_state()
-            action = action.copy()
-            action[S.BUTTONS.index("USE")] = 1
+            if self._should_auto_open_door():
+                act[self._USE_IDX] = 1
+                self._door_cooldown = 10
 
-        obs, base_reward, terminated, truncated, info = self.env.step(action)
+        self._last_use_pressed = bool(act[self._USE_IDX])
+        if self._door_cooldown > 0:
+            self._door_cooldown -= 1
+
+        # Replenish engine ammo before it runs dry when infinite_ammo is enabled
+        if self.config.infinite_ammo and self._last_obs is not None:
+            bullets = float(self._last_obs["vitals"][S.VITALS_INDEX["ammo_bullets"]])
+            shells = float(self._last_obs["vitals"][S.VITALS_INDEX["ammo_shells"]])
+            if bullets < 20.0:
+                self._send_game_cmd("give Clip")
+            if shells < 8.0:
+                self._send_game_cmd("give Shell")
+
+        pre_obs = self._last_obs
+        obs, base_reward, terminated, truncated, info = self.env.step(act)
         self.step_count += 1
+        self._last_obs = obs
 
-        # Infinite ammo mod: replenish bullets / shells if depleted
-        if self.config.infinite_ammo:
-            try:
-                obs["vitals"][S.VITALS_INDEX["ammo_bullets"]] = 50.0
-                obs["vitals"][S.VITALS_INDEX["ammo_shells"]] = 50.0
-            except Exception:
-                pass
-
-        shaped_reward = self.weights.time_step
-
-        # Privileged state inspection for reward shaping
         priv = self.env.unwrapped.privileged_state()
-        if priv is not None:
-            # 1. Spatial exploration bonus
-            cx = int(priv["x"] // self.config.cell_size)
-            cy = int(priv["y"] // self.config.cell_size)
-            if (cx, cy) not in self.visited_cells:
-                self.visited_cells.add((cx, cy))
-                shaped_reward += self.weights.new_cell_explored
-
-        # 2. Vitals tracking (health / damage)
-        curr_health = float(obs["vitals"][S.VITALS_INDEX["health"]])
-        if curr_health < self.last_health:
-            damage = self.last_health - curr_health
-            shaped_reward += damage * self.weights.damage_taken_per_hp
-        self.last_health = curr_health
-
-        # 3. Keycard pickup events
-        for k_name, idx in [
-            ("key_blue_card", S.VITALS_INDEX["key_blue_card"]),
-            ("key_yellow_card", S.VITALS_INDEX["key_yellow_card"]),
-            ("key_red_card", S.VITALS_INDEX["key_red_card"]),
-        ]:
-            if obs["vitals"][idx] > 0 and idx not in self.keys_held:
-                self.keys_held.add(idx)
-                shaped_reward += self.weights.key_pickup
-
-        # 4. Exit bonus
-        if info.get("exit_reached", False):
-            shaped_reward += self.weights.exit_reached
-            # Time & health bonus on exit
-            shaped_reward += (curr_health / 100.0) * 1.0
-
-        # 5. Death penalty
-        if terminated and not info.get("exit_reached", False) and curr_health <= 0:
-            shaped_reward += self.weights.death
+        shaped_reward, breakdown = self.reward_shaper.compute(
+            obs=obs,
+            privileged_state=priv,
+            base_reward=base_reward,
+            terminated=terminated,
+            truncated=truncated,
+            info=info,
+            action=act,
+            pre_obs=pre_obs,
+        )
 
         self.total_shaped_reward += shaped_reward
         info["shaped_reward"] = shaped_reward
         info["total_shaped_reward"] = self.total_shaped_reward
-        info["unique_cells_visited"] = len(self.visited_cells)
-
+        info["reward_breakdown"] = breakdown.to_dict()
+        info["unique_cells_visited"] = len(self.reward_shaper.visited_cells)
         return obs, shaped_reward, terminated, truncated, info
 
 
@@ -181,40 +267,110 @@ class CurriculumManager:
 
     def __init__(
         self,
-        initial_stage: CurriculumStage = CurriculumStage.STAGE_0_AIM_SHOOT,
-        promotion_threshold: float = 0.70,
-        window_size: int = 100,
-        rehearsal_prob: float = 0.15,
-        map_cache_dir: Path | str = "/tmp/doom_curriculum_maps",
+        initial_stage: CurriculumStage | None = None,
+        promotion_threshold: float | None = None,
+        window_size: int | None = None,
+        rehearsal_prob: float | None = None,
+        map_cache_dir: Path | str | None = None,
+        config_path: Path | str | None = None,
     ):
-        self.current_stage = initial_stage
-        self.promotion_threshold = promotion_threshold
-        self.window_size = window_size
-        self.rehearsal_prob = rehearsal_prob
-        self.map_cache_dir = Path(map_cache_dir)
+        raw_cfg = load_curriculum_yaml(config_path)
+        cur_sec = raw_cfg.get("curriculum", {})
+        stages_sec = raw_cfg.get("stages", {})
+        rewards_sec = raw_cfg.get("rewards", {})
+
+        self.current_stage = (
+            initial_stage
+            if initial_stage is not None
+            else CurriculumStage(int(cur_sec.get("initial_stage", 0)))
+        )
+        self.promotion_threshold = (
+            promotion_threshold
+            if promotion_threshold is not None
+            else float(cur_sec.get("promotion_threshold", 0.70))
+        )
+        self.window_size = (
+            window_size if window_size is not None else int(cur_sec.get("window_size", 100))
+        )
+        self.rehearsal_prob = (
+            rehearsal_prob
+            if rehearsal_prob is not None
+            else float(cur_sec.get("rehearsal_prob", 0.15))
+        )
+        self.max_episodes_per_stage = int(cur_sec.get("max_episodes_per_stage", 0))
+
+        self.reward_weights = RewardWeights(
+            exit_reached=float(rewards_sec.get("exit_reached", 10.0)),
+            key_pickup=float(rewards_sec.get("key_pickup", 2.0)),
+            door_opened=float(rewards_sec.get("door_opened", 0.5)),
+            locked_door_unlocked=float(rewards_sec.get("locked_door_unlocked", 2.0)),
+            enemy_killed=float(rewards_sec.get("enemy_killed", 0.5)),
+            damage_taken_per_hp=float(rewards_sec.get("damage_taken_per_hp", -0.005)),
+            death=float(rewards_sec.get("death", -3.0)),
+            time_step=float(rewards_sec.get("time_step", -0.001)),
+            new_cell_explored=float(rewards_sec.get("new_cell_explored", 0.02)),
+        )
+
+        self.stage_configs: dict[CurriculumStage, CurriculumConfig] = {}
+        for st in CurriculumStage:
+            st_raw = stages_sec.get(st.value, stages_sec.get(str(st.value), {})) or {}
+            self.stage_configs[st] = CurriculumConfig(
+                stage=st,
+                promotion_threshold=self.promotion_threshold,
+                window_size=self.window_size,
+                rehearsal_prob=self.rehearsal_prob,
+                god_mode=bool(st_raw.get("god_mode", st == CurriculumStage.STAGE_2_NAV_AUTO_DOORS)),
+                infinite_ammo=bool(
+                    st_raw.get("infinite_ammo", st == CurriculumStage.STAGE_0_AIM_SHOOT)
+                ),
+                auto_open_doors=bool(
+                    st_raw.get("auto_open_doors", st == CurriculumStage.STAGE_2_NAV_AUTO_DOORS)
+                ),
+                num_rooms=int(st_raw.get("num_rooms", 5)),
+                difficulty=float(st_raw.get("difficulty", min(1.0, 0.2 * int(st)))),
+            )
+
+        if map_cache_dir is None:
+            self.map_cache_dir = Path(tempfile.gettempdir()) / "doom_curriculum_maps"
+        else:
+            self.map_cache_dir = Path(map_cache_dir)
         self.map_cache_dir.mkdir(parents=True, exist_ok=True)
 
         self.generator = ProceduralMapGenerator()
-        self.history: collections.deque[bool] = collections.deque(maxlen=window_size)
+        self.history: collections.deque[bool] = collections.deque(maxlen=self.window_size)
+        self.stage_episodes: int = 0
         self.total_episodes: int = 0
+        self._last_map_metadata: dict[str, Any] = {}
 
     def record_episode(self, success: bool) -> None:
         self.history.append(success)
+        self.stage_episodes += 1
         self.total_episodes += 1
 
+        if self.current_stage >= CurriculumStage.STAGE_5_FULL_GAUNTLET:
+            return
+
+        promoted_reason: str | None = None
         if len(self.history) >= self.window_size:
             rate = sum(self.history) / len(self.history)
-            if (
-                rate >= self.promotion_threshold
-                and self.current_stage < CurriculumStage.STAGE_5_FULL_GAUNTLET
-            ):
-                promoted_to = CurriculumStage(self.current_stage + 1)
-                print(
-                    f"\n[CurriculumManager] Success rate {rate:.1%} exceeds {self.promotion_threshold:.1%}. "
-                    f"PROMOTING from {self.current_stage.name} -> {promoted_to.name}!"
-                )
-                self.current_stage = promoted_to
-                self.history.clear()
+            if rate >= self.promotion_threshold:
+                promoted_reason = f"Success rate {rate:.1%} >= {self.promotion_threshold:.1%}"
+        if (
+            promoted_reason is None
+            and self.max_episodes_per_stage > 0
+            and self.stage_episodes >= self.max_episodes_per_stage
+        ):
+            promoted_reason = f"Reached stage cap {self.stage_episodes} episodes"
+
+        if promoted_reason is not None:
+            promoted_to = CurriculumStage(self.current_stage + 1)
+            print(
+                f"\n[CurriculumManager] {promoted_reason}. "
+                f"PROMOTING from {self.current_stage.name} -> {promoted_to.name}!"
+            )
+            self.current_stage = promoted_to
+            self.history.clear()
+            self.stage_episodes = 0
 
     @property
     def success_rate(self) -> float:
@@ -227,42 +383,105 @@ class CurriculumManager:
         if self.current_stage == CurriculumStage.STAGE_0_AIM_SHOOT:
             return self.current_stage
 
-        # Rehearsal probability (mix 10-20% earlier stages to avoid forgetting)
         if np.random.rand() < self.rehearsal_prob:
             earlier_stages = list(range(self.current_stage))
-            return CurriculumStage(np.random.choice(earlier_stages))
+            return CurriculumStage(int(np.random.choice(earlier_stages)))
 
         return self.current_stage
 
     def get_or_generate_map(self, stage: CurriculumStage, seed: int | None = None) -> Path:
-        """Returns a path to a map suited for the given stage."""
-        if seed is not None:
-            self.generator = ProceduralMapGenerator(seed)
+        """Returns a path to a verified-solvable map suited for the given stage."""
+        cur_seed = seed if seed is not None else int(np.random.randint(1_000_000))
+        st_cfg = self.stage_configs[stage]
+        map_path = self.map_cache_dir / f"stage_{stage.value}_{cur_seed}.wad"
 
-        difficulty = min(1.0, 0.2 * int(stage))
-        map_path = self.map_cache_dir / f"stage_{stage.value}_{seed or np.random.randint(100000)}.wad"
+        family_by_stage = {
+            CurriculumStage.STAGE_0_AIM_SHOOT: MapFamily.FAMILY_A,
+            CurriculumStage.STAGE_1_COMBAT_ARENA: MapFamily.FAMILY_A,
+            CurriculumStage.STAGE_2_NAV_AUTO_DOORS: MapFamily.FAMILY_B,
+            CurriculumStage.STAGE_3_NAV_DOORS_ENEMIES: MapFamily.FAMILY_B,
+            CurriculumStage.STAGE_4_KEYCARD_PUZZLE: MapFamily.FAMILY_C,
+            CurriculumStage.STAGE_5_FULL_GAUNTLET: MapFamily.FAMILY_D,
+        }
+        family = family_by_stage.get(stage, MapFamily.FAMILY_D)
 
-        if stage == CurriculumStage.STAGE_0_AIM_SHOOT:
-            m, _ = self.generator.generate(MapFamily.FAMILY_A, difficulty=0.1)
-        elif stage == CurriculumStage.STAGE_1_COMBAT_ARENA:
-            m, _ = self.generator.generate(MapFamily.FAMILY_A, difficulty=0.6)
-        elif stage == CurriculumStage.STAGE_2_NAV_AUTO_DOORS:
-            m, _ = self.generator.generate(MapFamily.FAMILY_B, num_rooms=4, difficulty=0.0)
-        elif stage == CurriculumStage.STAGE_3_NAV_DOORS_ENEMIES:
-            m, _ = self.generator.generate(MapFamily.FAMILY_B, num_rooms=6, difficulty=0.5)
-        elif stage == CurriculumStage.STAGE_4_KEYCARD_PUZZLE:
-            m, _ = self.generator.generate(MapFamily.FAMILY_C, num_rooms=5, difficulty=0.5)
-        elif stage == CurriculumStage.STAGE_5_FULL_GAUNTLET:
-            m, _ = self.generator.generate(MapFamily.FAMILY_D, num_rooms=7, difficulty=0.8)
-        else:
-            m, _ = self.generator.generate(MapFamily.FAMILY_D, num_rooms=6, difficulty=0.5)
+        solvable = False
+        m = None
+        for attempt in range(20):
+            gen = ProceduralMapGenerator(cur_seed + attempt)
+            m, solvable = gen.generate(
+                family,
+                num_rooms=st_cfg.num_rooms,
+                difficulty=st_cfg.difficulty,
+            )
+            if solvable:
+                break
+        if m is None or not solvable:
+            raise RuntimeError(f"Could not generate solvable map for {stage.name}")
 
         m.write_wad(map_path)
+        self._last_map_metadata = dict(getattr(m, "metadata", {}))
         return map_path
 
-    def make_curriculum_env(self, stage: CurriculumStage | None = None, seed: int = 0) -> gym.Env:
-        """Creates a wrapped curriculum environment."""
+    def sample_map_spec(
+        self,
+        stage: CurriculumStage | None = None,
+        seed: int | None = None,
+        filename: str | None = None,
+    ) -> tuple[Path, CurriculumConfig, dict[str, Any]]:
+        """Sample a stage, write a verified-solvable WAD, and return `(path, cfg, metadata)`."""
+        active_stage = stage if stage is not None else self.sample_stage_for_episode()
+        cur_seed = seed if seed is not None else int(np.random.randint(1_000_000))
+        st_cfg = self.stage_configs[active_stage]
+        map_path = (
+            self.map_cache_dir / filename
+            if filename is not None
+            else self.map_cache_dir / f"stage_{active_stage.value}_{cur_seed}.wad"
+        )
+
+        family_by_stage = {
+            CurriculumStage.STAGE_0_AIM_SHOOT: MapFamily.FAMILY_A,
+            CurriculumStage.STAGE_1_COMBAT_ARENA: MapFamily.FAMILY_A,
+            CurriculumStage.STAGE_2_NAV_AUTO_DOORS: MapFamily.FAMILY_B,
+            CurriculumStage.STAGE_3_NAV_DOORS_ENEMIES: MapFamily.FAMILY_B,
+            CurriculumStage.STAGE_4_KEYCARD_PUZZLE: MapFamily.FAMILY_C,
+            CurriculumStage.STAGE_5_FULL_GAUNTLET: MapFamily.FAMILY_D,
+        }
+        family = family_by_stage.get(active_stage, MapFamily.FAMILY_D)
+
+        solvable = False
+        m = None
+        for attempt in range(20):
+            gen = ProceduralMapGenerator(cur_seed + attempt)
+            m, solvable = gen.generate(
+                family,
+                num_rooms=st_cfg.num_rooms,
+                difficulty=st_cfg.difficulty,
+            )
+            if solvable:
+                break
+        if m is None or not solvable:
+            raise RuntimeError(f"Could not generate solvable map for {active_stage.name}")
+
+        m.write_wad(map_path)
+        meta = dict(getattr(m, "metadata", {}))
+        self._last_map_metadata = meta
+        return map_path, st_cfg, meta
+
+    def make_curriculum_env(
+        self,
+        stage: CurriculumStage | None = None,
+        seed: int = 0,
+        render_buffers: bool = True,
+    ) -> gym.Env:
+        """Creates a wrapped curriculum environment configured from curriculum.yaml."""
         active_stage = stage if stage is not None else self.sample_stage_for_episode()
         wad_path = self.get_or_generate_map(active_stage, seed=seed)
-        base_env = make_env(str(wad_path), episode_ticks=2100)
-        return CurriculumEnvWrapper(base_env, stage=active_stage)
+        base_env = make_env(str(wad_path), episode_ticks=2100, render_buffers=render_buffers)
+        st_cfg = self.stage_configs[active_stage]
+        return CurriculumEnvWrapper(
+            base_env,
+            stage=active_stage,
+            reward_weights=self.reward_weights,
+            config=st_cfg,
+        )

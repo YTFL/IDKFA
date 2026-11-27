@@ -78,7 +78,8 @@ class RNDCuriosity:
         self.target = RNDTargetNetwork(in_dim=in_dim, out_dim=emb_dim).to(self.device)
         self.predictor = RNDPredictorNetwork(in_dim=in_dim, out_dim=emb_dim).to(self.device)
         self.optimizer = torch.optim.Adam(self.predictor.parameters(), lr=lr)
-        self.reward_rms = RunningMeanStd()
+        # Initialize count=1.0 and clamp std>=0.25 so early steps don't spike intrinsic rewards
+        self.reward_rms = RunningMeanStd(epsilon=1.0)
 
     def _extract_spatial_vector(self, processed_obs: ProcessedObservation) -> np.ndarray:
         # Spatial only: rays (64 * 8) + depth (32) = 544 dims
@@ -91,16 +92,24 @@ class RNDCuriosity:
     ) -> float:
         spatial_vec = self._extract_spatial_vector(processed_obs)
         x = torch.from_numpy(spatial_vec).float().unsqueeze(0).to(self.device)
+        rewards = self.compute_intrinsic_rewards_batch(x, update_predictor=update_predictor)
+        return float(rewards[0])
 
+    def compute_intrinsic_rewards_batch(
+        self,
+        x_batch: torch.Tensor,
+        update_predictor: bool = False,
+    ) -> np.ndarray:
+        """Vectorized RND reward computation (and optional predictor update) over `(B, in_dim)`."""
+        x = x_batch.to(self.device, dtype=torch.float32)
         with torch.no_grad():
             target_out = self.target(x)
             pred_out = self.predictor(x)
-            raw_err = F.mse_loss(pred_out, target_out, reduction="none").sum(dim=-1).item()
+            raw_errs = F.mse_loss(pred_out, target_out, reduction="none").mean(dim=-1).cpu().numpy()
 
-        # Update running reward normalizer
-        self.reward_rms.update(np.array([raw_err]))
-        norm_reward = raw_err / (math.sqrt(self.reward_rms.var.item()) + 1e-8)
-        intrinsic_reward = float(norm_reward * self.scale)
+        self.reward_rms.update(raw_errs)
+        std = max(0.25, math.sqrt(float(self.reward_rms.var) + 1e-8))
+        intrinsic_rewards = np.clip((raw_errs / std) * self.scale, 0.0, 2.0 * self.scale)
 
         if update_predictor:
             self.optimizer.zero_grad()
@@ -108,7 +117,7 @@ class RNDCuriosity:
             loss.backward()
             self.optimizer.step()
 
-        return intrinsic_reward
+        return intrinsic_rewards.astype(np.float32)
 
 
 class EpisodicNoveltyBuffer:

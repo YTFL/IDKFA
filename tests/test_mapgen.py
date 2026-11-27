@@ -5,9 +5,11 @@ import numpy as np
 from pathlib import Path
 
 from doom_env import make_env
+from fixtures import fixture_wad
 from training.mapgen.udmf import UDMFMap, THING_PLAYER1, THING_ZOMBIEMAN
 from training.mapgen.generator import ProceduralMapGenerator, MapFamily, DoorEdge, Room
 from training.envs.curriculum import (
+    CurriculumConfig,
     CurriculumManager,
     CurriculumStage,
     CurriculumEnvWrapper,
@@ -89,12 +91,17 @@ def test_curriculum_wrapper_and_manager(tmp_path):
     assert mgr.current_stage == CurriculumStage.STAGE_0_AIM_SHOOT
 
     env = mgr.make_curriculum_env(stage=CurriculumStage.STAGE_0_AIM_SHOOT, seed=7)
+    assert env.config.infinite_ammo is True
+    assert mgr.stage_configs[CurriculumStage.STAGE_2_NAV_AUTO_DOORS].auto_open_doors is True
+    assert mgr.stage_configs[CurriculumStage.STAGE_2_NAV_AUTO_DOORS].god_mode is True
+
     obs, _ = env.reset(seed=42)
     assert "rays" in obs
     assert "vitals" in obs
 
     obs, r, term, trunc, info = env.step(env.action_space.sample())
     assert "shaped_reward" in info
+    assert "reward_breakdown" in info
     assert "unique_cells_visited" in info
     assert info["unique_cells_visited"] >= 1
     env.close()
@@ -103,3 +110,40 @@ def test_curriculum_wrapper_and_manager(tmp_path):
     for _ in range(100):
         mgr.record_episode(True)
     assert mgr.current_stage == CurriculumStage.STAGE_1_COMBAT_ARENA
+
+
+def test_generated_locked_doors_and_watertight_geometry(tmp_path):
+    """Generated C/D maps must emit real locked door sectors and watertight room walls."""
+    for seed in (10, 42, 123):
+        for fam in (MapFamily.FAMILY_C, MapFamily.FAMILY_D):
+            gen = ProceduralMapGenerator(seed=seed)
+            m, solvable = gen.generate(fam, num_rooms=6, difficulty=0.5)
+            assert solvable
+            wad_path = tmp_path / f"{fam.value}_{seed}.wad"
+            m.write_wad(wad_path)
+
+            env = make_env(str(wad_path), episode_ticks=100)
+            env.reset(seed=0)
+            ps = env.privileged_state()
+            assert any(lock > 0 for lock in ps["door_lock"]), f"No locked door in {fam} seed={seed}"
+            env.close()
+
+
+def test_curriculum_auto_open_doors_edge_triggered():
+    """Stage 2 auto_open_doors must pulse USE when approaching a closed door and reach exit."""
+    wad_door = fixture_wad("##########\n#P..D...E#\n##########")
+    env = CurriculumEnvWrapper(
+        make_env(wad_door, episode_ticks=300),
+        stage=CurriculumStage.STAGE_2_NAV_AUTO_DOORS,
+        config=CurriculumConfig(stage=CurriculumStage.STAGE_2_NAV_AUTO_DOORS, auto_open_doors=True),
+    )
+    env.reset(seed=0)
+    fwd = np.array([1, 0, 0, 0, 0, 0, 0, 0, 0], dtype=np.int8)
+    reached_exit = False
+    for _ in range(100):
+        _, _, term, trunc, info = env.step(fwd)
+        if term or trunc:
+            reached_exit = info["exit_reached"]
+            break
+    env.close()
+    assert reached_exit, "auto_open_doors failed to open door and reach exit"

@@ -16,6 +16,17 @@ from .ray_encoder import RayEncoder
 from .spatial_map import EgomotionEstimator, EgocentricSpatialMap
 
 
+@dataclass(frozen=True)
+class AblationFlags:
+    """Optional inference-time module knockout flags for Phase 7 ablations."""
+
+    ablate_map: bool = False
+    ablate_landmarks: bool = False
+    ablate_entity_attn: bool = False
+    ablate_mode_head: bool = False
+    ablate_depth: bool = False
+
+
 @dataclass
 class EMLRPStepOutput:
     """Outputs produced by a single step of EMLRPPolicy."""
@@ -152,6 +163,7 @@ class EMLRPPolicy(nn.Module):
         prev_action: Tensor,
         done: Tensor | None = None,
         compute_aux: bool = False,
+        ablations: AblationFlags | None = None,
     ) -> EMLRPStepOutput:
         """Run one decision step.
 
@@ -181,11 +193,17 @@ class EMLRPPolicy(nn.Module):
             depth_feat = torch.zeros(
                 B, self.config.depth_feat_dim, device=ray_dist.device, dtype=ray_dist.dtype
             )
+        if ablations is not None and ablations.ablate_depth and depth_feat is not None:
+            depth_feat = torch.zeros_like(depth_feat)
 
         # 1. Encode current sensory streams
         ray_embed, ray_sector_feats = self.ray_encoder(ray_dist, ray_hit)
         entity_summary, entity_tokens, entity_importance = self.entity_encoder(
-            ent_feat, ent_type, ent_mask, ray_embed
+            ent_feat,
+            ent_type,
+            ent_mask,
+            ray_embed,
+            ablate_attention=bool(ablations is not None and ablations.ablate_entity_attn),
         )
         vitals_embed = self.vitals_encoder(vitals)
         prev_act_embed = self.prev_action_encoder(prev_action.float())
@@ -214,6 +232,11 @@ class EMLRPPolicy(nn.Module):
             prev_gru_h,
             vitals,
         )
+        if ablations is not None:
+            if ablations.ablate_map:
+                map_readout = torch.zeros_like(map_readout)
+            if ablations.ablate_landmarks:
+                landmark_readout = torch.zeros_like(landmark_readout)
 
         # 3. Fuse modalities and update GRU core
         parts = [
@@ -233,6 +256,8 @@ class EMLRPPolicy(nn.Module):
         # 4. Latent mode conditioning and policy/value heads
         mode_logits = self.mode_head(next_gru_h)
         mode_probs = F.softmax(mode_logits, dim=-1)
+        if ablations is not None and ablations.ablate_mode_head:
+            mode_probs = torch.full_like(mode_probs, 1.0 / mode_probs.shape[-1])
         mode_embed = torch.matmul(mode_probs, self.mode_embeddings)  # (B, mode_embed_dim)
 
         policy_in = torch.cat([next_gru_h, mode_embed], dim=-1)
@@ -274,40 +299,129 @@ class EMLRPPolicy(nn.Module):
         done_seq: Tensor | None = None,
         compute_aux: bool = True,
     ) -> tuple[dict[str, Tensor], EMLRPState]:
-        """Unroll policy over a `(B, T, ...)` sequence for truncated BPTT training."""
-        T = obs_seq["ray_distance"].shape[1]
-        state = init_state
+        """Unroll policy over a `(B, T, ...)` sequence, batching non-recurrent work across `B*T`."""
+        B, T = obs_seq["ray_distance"].shape[:2]
+        BT = B * T
 
-        logits_list: list[Tensor] = []
-        vext_list: list[Tensor] = []
-        vint_list: list[Tensor] = []
-        mode_list: list[Tensor] = []
-        aux_lists: dict[str, list[Tensor]] = {}
+        # 1. Batch all non-recurrent sensory encoders & map/landmark write prep over (B * T)
+        ray_dist = obs_seq["ray_distance"].reshape(BT, -1)
+        ray_hit = obs_seq["ray_hit_type"].reshape(BT, -1)
+        ent_feat = obs_seq["entity_features"].reshape(BT, self.config.entity_max, -1)
+        ent_type = obs_seq["entity_types"].reshape(BT, -1)
+        ent_mask = obs_seq["entity_mask"].reshape(BT, -1)
+        vitals = obs_seq["vitals"].reshape(BT, -1)
+        prev_act = prev_action_seq.reshape(BT, -1).float()
+        depth_raw = obs_seq.get("depth_feat")
+        if self.config.depth_feat_dim > 0 and depth_raw is None:
+            depth_feat = torch.zeros(BT, self.config.depth_feat_dim, device=ray_dist.device, dtype=ray_dist.dtype)
+        elif depth_raw is not None:
+            depth_feat = depth_raw.reshape(BT, -1)
+        else:
+            depth_feat = None
+
+        ray_embed, ray_sector_feats = self.ray_encoder(ray_dist, ray_hit)
+        entity_summary, entity_tokens, entity_importance = self.entity_encoder(
+            ent_feat, ent_type, ent_mask, ray_embed
+        )
+        vitals_embed = self.vitals_encoder(vitals)
+        prev_act_embed = self.prev_action_encoder(prev_act)
+        delta_xy, delta_theta = self.egomotion(prev_act, vitals)
+        obs_map_all = self.spatial_map.compute_obs_map(ray_dist, ray_sector_feats, depth_feat=depth_feat)
+        ent_key, ent_pos, ent_strength, ray_key, ray_pos, ray_strength = (
+            self.landmark_memory.prepare_candidates(entity_tokens, ent_feat, ent_mask, ray_embed)
+        )
+
+        # Unflatten time dimension for the sequential recurrent core
+        delta_xy_t = delta_xy.view(B, T, -1)
+        delta_theta_t = delta_theta.view(B, T)
+        obs_map_t = obs_map_all.view(B, T, *obs_map_all.shape[1:])
+        ent_key_t = ent_key.view(B, T, -1)
+        ent_pos_t = ent_pos.view(B, T, -1)
+        ent_strength_t = ent_strength.view(B, T)
+        ray_key_t = ray_key.view(B, T, -1)
+        ray_pos_t = ray_pos.view(B, T, -1)
+        ray_strength_t = ray_strength.view(B, T)
+        vitals_t = vitals.view(B, T, -1)
+
+        static_parts = [ray_embed, entity_summary, vitals_embed, prev_act_embed]
+        static_cat = torch.cat(static_parts, dim=-1).view(B, T, -1)
+        depth_t = depth_feat.view(B, T, -1) if (self.config.depth_feat_dim > 0 and depth_feat is not None) else None
+
+        # 2. Sequential recurrent loop over time T (stateful map warp, landmark slots, GRU)
+        state = init_state
+        prev_gru_list: list[Tensor] = []
+        next_gru_list: list[Tensor] = []
 
         for t in range(T):
-            step_obs = {k: v[:, t] for k, v in obs_seq.items()}
-            step_done = done_seq[:, t] if done_seq is not None else None
-            out = self.step(
-                step_obs,
-                state,
-                prev_action_seq[:, t],
-                done=step_done,
-                compute_aux=compute_aux,
+            if done_seq is not None:
+                state = state.reset_mask(done_seq[:, t])
+            prev_gru_h = state.gru_h
+
+            next_map, map_readout = self.spatial_map.step_with_obs_map(
+                state.spatial_map,
+                delta_xy_t[:, t],
+                delta_theta_t[:, t],
+                obs_map_t[:, t],
+                prev_gru_h,
             )
-            state = out.state
-            logits_list.append(out.action_logits)
-            vext_list.append(out.value_ext)
-            vint_list.append(out.value_int)
-            mode_list.append(out.mode_logits)
-            for ak, av in out.aux.items():
-                aux_lists.setdefault(ak, []).append(av)
+            next_keys, next_pos, next_valid, landmark_readout = self.landmark_memory.step_with_candidates(
+                state.landmark_keys,
+                state.landmark_pos,
+                state.landmark_valid,
+                delta_xy_t[:, t],
+                delta_theta_t[:, t],
+                ent_key_t[:, t],
+                ent_pos_t[:, t],
+                ent_strength_t[:, t],
+                ray_key_t[:, t],
+                ray_pos_t[:, t],
+                ray_strength_t[:, t],
+                prev_gru_h,
+                vitals_t[:, t],
+            )
+
+            fuse_parts = [static_cat[:, t], map_readout, landmark_readout]
+            if depth_t is not None:
+                fuse_parts.append(depth_t[:, t])
+            fused = self.fusion(torch.cat(fuse_parts, dim=-1))
+            next_gru_h = self.gru_norm(self.gru(fused, prev_gru_h))
+
+            state = EMLRPState(
+                gru_h=next_gru_h,
+                spatial_map=next_map,
+                landmark_keys=next_keys,
+                landmark_pos=next_pos,
+                landmark_valid=next_valid,
+            )
+            prev_gru_list.append(prev_gru_h)
+            next_gru_list.append(next_gru_h)
+
+        # 3. Batch all output & auxiliary heads over (B * T)
+        prev_gru_all = torch.stack(prev_gru_list, dim=1).reshape(BT, -1)
+        next_gru_all = torch.stack(next_gru_list, dim=1).reshape(BT, -1)
+
+        mode_logits = self.mode_head(next_gru_all)
+        mode_probs = F.softmax(mode_logits, dim=-1)
+        mode_embed = torch.matmul(mode_probs, self.mode_embeddings)
+        policy_in = torch.cat([next_gru_all, mode_embed], dim=-1)
+
+        action_logits = self.policy_head(policy_in).view(B, T, -1)
+        value_ext = self.value_ext_head(next_gru_all).view(B, T, 1)
+        value_int = self.value_int_head(next_gru_all).view(B, T, 1)
 
         outputs: dict[str, Tensor] = {
-            "action_logits": torch.stack(logits_list, dim=1),
-            "value_ext": torch.stack(vext_list, dim=1),
-            "value_int": torch.stack(vint_list, dim=1),
-            "mode_logits": torch.stack(mode_list, dim=1),
+            "action_logits": action_logits,
+            "value_ext": value_ext,
+            "value_int": value_int,
+            "mode_logits": mode_logits.view(B, T, -1),
         }
-        for ak, av_list in aux_lists.items():
-            outputs[f"aux_{ak}"] = torch.stack(av_list, dim=1)
+        if compute_aux:
+            outputs["aux_entity_importance"] = entity_importance.view(B, T, -1)
+            outputs["aux_next_ray"] = self.aux_next_ray(policy_in).view(B, T, -1)
+            outputs["aux_landmark_dir"] = self.aux_landmark_dir(next_gru_all).view(B, T, -1)
+            outputs["aux_inverse_dyn"] = self.aux_inverse_dyn(
+                torch.cat([prev_gru_all, next_gru_all], dim=-1)
+            ).view(B, T, -1)
+            outputs["aux_combat"] = self.aux_combat(policy_in).view(B, T, -1)
+
         return outputs, state

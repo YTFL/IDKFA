@@ -16,7 +16,7 @@ class RayEncoder(nn.Module):
         super().__init__()
         self.config = config
         self.hit_embed = nn.Embedding(config.ray_hit_types, config.ray_hit_embed_dim)
-        in_ch = 1 + config.ray_hit_embed_dim
+        in_ch = 2 + config.ray_hit_embed_dim  # linear distance + log near-field distance + hit embed
 
         # Per-sector stem preserves full 64-bin angular resolution for spatial map writing.
         self.sector_stem = nn.Sequential(
@@ -60,7 +60,9 @@ class RayEncoder(nn.Module):
             ray_sector_feats: `(B, 64, ray_sector_dim)` per-ray features.
         """
         hit_emb = self.hit_embed(ray_hit_type.long()).permute(0, 2, 1)  # (B, E, 64)
-        x = torch.cat([ray_distance.unsqueeze(1), hit_emb], dim=1)  # (B, 1+E, 64)
+        dist_clamped = ray_distance.clamp(0.0, 1.0)
+        ray_log = torch.log1p(9.0 * dist_clamped) / 2.302585092994046
+        x = torch.cat([dist_clamped.unsqueeze(1), ray_log.unsqueeze(1), hit_emb], dim=1)  # (B, 2+E, 64)
 
         sector_h = self.sector_stem(x)  # (B, 64, 64)
         ray_sector_feats = self.sector_proj(sector_h).permute(0, 2, 1)  # (B, 64, S)

@@ -130,6 +130,24 @@ def test_sequence_bptt_reset_and_gradients() -> None:
     assert torch.allclose(final_state.gru_h, tail_final.gru_h, atol=1e-5)
     assert torch.allclose(final_state.spatial_map, tail_final.spatial_map, atol=1e-5)
 
+    # Verify vectorized forward_sequence matches step-by-step step()
+    model.eval()
+    with torch.inference_mode():
+        seq_eval, seq_final = model.forward_sequence(
+            obs_seq, model.init_state(B), prev_act_seq, done_seq=done_seq, compute_aux=True
+        )
+        st = model.init_state(B)
+        step_logits = []
+        for t in range(T):
+            step_obs = {k: v[:, t] for k, v in obs_seq.items()}
+            o = model.step(step_obs, st, prev_act_seq[:, t], done=done_seq[:, t], compute_aux=False)
+            st = o.state
+            step_logits.append(o.action_logits)
+        assert torch.allclose(seq_eval["action_logits"], torch.stack(step_logits, dim=1), atol=1e-5)
+        assert torch.allclose(seq_final.gru_h, st.gru_h, atol=1e-5)
+        assert torch.allclose(seq_final.spatial_map, st.spatial_map, atol=1e-5)
+    model.train()
+
     loss = (
         outputs["action_logits"].pow(2).mean()
         + outputs["value_ext"].pow(2).mean()

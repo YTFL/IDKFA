@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Sequence
+from typing import Any, Sequence
 
 from doom_env.wad import Lump, write_wad
 
@@ -113,6 +113,7 @@ class UDMFMap:
         self.sidedefs: list[Sidedef] = []
         self.linedefs: list[Linedef] = []
         self.things: list[Thing] = []
+        self.metadata: dict[str, Any] = {}
 
     def add_vertex(self, x: float, y: float) -> int:
         idx = len(self.vertices)

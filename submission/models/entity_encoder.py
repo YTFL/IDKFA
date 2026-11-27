@@ -62,6 +62,7 @@ class EntitySetEncoder(nn.Module):
         entity_types: Tensor,
         entity_mask: Tensor,
         ray_embed: Tensor,
+        ablate_attention: bool = False,
     ) -> tuple[Tensor, Tensor, Tensor]:
         """Encode visible entities.
 
@@ -70,6 +71,7 @@ class EntitySetEncoder(nn.Module):
             entity_types: `(B, N)` integer class IDs in `[0, 11]`.
             entity_mask: `(B, N)` binary mask (`1` valid, `0` padded).
             ray_embed: `(B, ray_embed_dim)` conditioning context for attention pooling.
+            ablate_attention: If True, bypass self-attention and use masked mean pooling.
 
         Returns:
             entity_summary: `(B, entity_embed_dim)` permutation-invariant summary.
@@ -78,31 +80,37 @@ class EntitySetEncoder(nn.Module):
         """
         mask_bool = entity_mask > 0.5  # (B, N)
         has_any = mask_bool.any(dim=1)  # (B,)
+        mask_f = mask_bool.unsqueeze(-1).to(entity_features.dtype)
 
         type_emb = self.type_embed(entity_types.long())
         x = torch.cat([entity_features, type_emb], dim=-1)
-        tokens = self.entity_mlp(x) * mask_bool.unsqueeze(-1).to(x.dtype)
+        tokens = self.entity_mlp(x) * mask_f
 
-        # Guard against all-masked batches so MultiheadAttention never divides by zero.
-        safe_key_padding_mask = ~mask_bool
-        if not bool(has_any.all()):
-            safe_key_padding_mask = safe_key_padding_mask.clone()
-            safe_key_padding_mask[~has_any, 0] = False
+        if ablate_attention:
+            v = self.v_proj(tokens) * mask_f
+            denom = mask_f.sum(dim=1).clamp(min=1.0)
+            pooled = (v.sum(dim=1) / denom) * has_any.unsqueeze(-1).to(v.dtype)
+        else:
+            # Guard against all-masked batches so MultiheadAttention never divides by zero.
+            safe_key_padding_mask = ~mask_bool
+            if not bool(has_any.all()):
+                safe_key_padding_mask = safe_key_padding_mask.clone()
+                safe_key_padding_mask[~has_any, 0] = False
 
-        tokens = self.transformer(tokens, src_key_padding_mask=safe_key_padding_mask)
-        tokens = tokens * mask_bool.unsqueeze(-1).to(tokens.dtype)
+            tokens = self.transformer(tokens, src_key_padding_mask=safe_key_padding_mask)
+            tokens = tokens * mask_f
 
-        # Ray-conditioned cross-attention pooling over valid entities.
-        q = self.ray_to_query(ray_embed).unsqueeze(1)  # (B, 1, H)
-        k = self.k_proj(tokens)  # (B, N, H)
-        v = self.v_proj(tokens)  # (B, N, H)
-        attn_logits = torch.bmm(q, k.transpose(1, 2)).squeeze(1) * (tokens.shape[-1] ** -0.5)
-        attn_logits = attn_logits.masked_fill(~mask_bool, -1e4)
+            # Ray-conditioned cross-attention pooling over valid entities.
+            q = self.ray_to_query(ray_embed).unsqueeze(1)  # (B, 1, H)
+            k = self.k_proj(tokens)  # (B, N, H)
+            v = self.v_proj(tokens)  # (B, N, H)
+            attn_logits = torch.bmm(q, k.transpose(1, 2)).squeeze(1) * (tokens.shape[-1] ** -0.5)
+            attn_logits = attn_logits.masked_fill(~mask_bool, -1e4)
 
-        attn_weights = F.softmax(attn_logits, dim=-1)
-        attn_weights = attn_weights * mask_bool.to(attn_weights.dtype)
-        pooled = torch.bmm(attn_weights.unsqueeze(1), v).squeeze(1)  # (B, H)
-        pooled = pooled * has_any.unsqueeze(-1).to(pooled.dtype)
+            attn_weights = F.softmax(attn_logits, dim=-1)
+            attn_weights = attn_weights * mask_bool.to(attn_weights.dtype)
+            pooled = torch.bmm(attn_weights.unsqueeze(1), v).squeeze(1)  # (B, H)
+            pooled = pooled * has_any.unsqueeze(-1).to(pooled.dtype)
 
         entity_summary = self.out_proj(pooled) * has_any.unsqueeze(-1).to(pooled.dtype)
         entity_importance = self.importance_head(tokens).squeeze(-1)
