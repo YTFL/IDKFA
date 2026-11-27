@@ -1,0 +1,58 @@
+# High-performance pure-vanilla BC -> PPO configuration (no step-budget cap, targeting 90%+ clear rate)
+# Hardware-tuned for 16-thread CPU + RTX 5060 (8 GB)
+
+train:
+  run_name: emlrp_vanilla_90
+  device: auto
+  seed: 42
+  total_steps: 3000000
+  eval_interval_updates: 50
+  save_interval_updates: 25
+  eval_maps_per_tier: 4
+
+env:
+  num_envs: 32
+  use_subproc: true
+  initial_stage: 5
+  episode_ticks: 4200
+  render_buffers: true
+  use_depth: true
+  use_episodic_novelty: true
+  sticky_action_prob: 0.03
+  potential_scale: 1.0
+  dataset_manifest: maps/dataset/manifest.json
+  dataset_mix_prob: 0.35
+  map_reuse_episodes: 3
+
+ppo:
+  rollout_len: 128
+  seq_len: 64
+  minibatch_seqs: 32
+  use_bf16: true
+  use_action_mask: true
+  critic_warmup_updates: 15
+  bc_kl_coef: 0.01
+  ppo_epochs: 3
+  gamma: 0.995
+  gamma_int: 0.99
+  gae_lambda: 0.95
+  clip_eps: 0.12
+  value_clip_eps: 0.2
+  vf_ext_coef: 0.5
+  vf_int_coef: 0.25
+  entropy_coef_start: 0.006
+  entropy_coef_end: 0.0005
+  intrinsic_coef_start: 0.15
+  intrinsic_coef_end: 0.01
+  aux_coef: 0.1
+  lr: 0.00005
+  lr_end: 0.000005
+  max_grad_norm: 0.5
+  target_kl: 0.025
+  entity_dropout_prob: 0.0
+  obs_noise_std: 0.0
+
+rnd:
+  emb_dim: 128
+  lr: 0.0001
+  scale: 0.05

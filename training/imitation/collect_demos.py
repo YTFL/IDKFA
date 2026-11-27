@@ -231,7 +231,7 @@ def collect_demos(
 
         total_tasks = len(tasks)
         if workers is None:
-            workers = min(12, os.cpu_count() or 1)
+            workers = os.cpu_count() or 1
         n_workers = max(1, min(int(workers), total_tasks)) if total_tasks > 0 else 1
 
         results_by_key: dict[tuple[int, int], dict[str, Any]] = {}

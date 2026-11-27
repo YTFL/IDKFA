@@ -1,0 +1,107 @@
+{
+  "total_episodes": 970,
+  "total_frames": 75266,
+  "use_depth": true,
+  "shards": [
+    {
+      "file": "shard_000.npz",
+      "episodes": 100,
+      "frames": 1451
+    },
+    {
+      "file": "shard_001.npz",
+      "episodes": 100,
+      "frames": 1658
+    },
+    {
+      "file": "shard_002.npz",
+      "episodes": 100,
+      "frames": 4388
+    },
+    {
+      "file": "shard_003.npz",
+      "episodes": 100,
+      "frames": 8767
+    },
+    {
+      "file": "shard_004.npz",
+      "episodes": 100,
+      "frames": 11297
+    },
+    {
+      "file": "shard_005.npz",
+      "episodes": 100,
+      "frames": 9605
+    },
+    {
+      "file": "shard_006.npz",
+      "episodes": 100,
+      "frames": 7830
+    },
+    {
+      "file": "shard_007.npz",
+      "episodes": 100,
+      "frames": 9255
+    },
+    {
+      "file": "shard_008.npz",
+      "episodes": 100,
+      "frames": 9984
+    },
+    {
+      "file": "shard_009.npz",
+      "episodes": 70,
+      "frames": 11031
+    }
+  ],
+  "stage_stats": {
+    "0": {
+      "stage_name": "STAGE_0_AIM_SHOOT",
+      "attempted": 200,
+      "solved": 189,
+      "solve_rate": 0.945,
+      "kept_episodes": 189,
+      "frames": 2722
+    },
+    "1": {
+      "stage_name": "STAGE_1_COMBAT_ARENA",
+      "attempted": 200,
+      "solved": 157,
+      "solve_rate": 0.785,
+      "kept_episodes": 157,
+      "frames": 6640
+    },
+    "2": {
+      "stage_name": "STAGE_2_NAV_AUTO_DOORS",
+      "attempted": 200,
+      "solved": 197,
+      "solve_rate": 0.985,
+      "kept_episodes": 197,
+      "frames": 23475
+    },
+    "3": {
+      "stage_name": "STAGE_3_NAV_DOORS_ENEMIES",
+      "attempted": 200,
+      "solved": 196,
+      "solve_rate": 0.98,
+      "kept_episodes": 196,
+      "frames": 15155
+    },
+    "4": {
+      "stage_name": "STAGE_4_KEYCARD_PUZZLE",
+      "attempted": 200,
+      "solved": 190,
+      "solve_rate": 0.95,
+      "kept_episodes": 190,
+      "frames": 19020
+    },
+    "5": {
+      "stage_name": "STAGE_5_FULL_GAUNTLET",
+      "attempted": 200,
+      "solved": 41,
+      "solve_rate": 0.205,
+      "kept_episodes": 41,
+      "frames": 8254
+    }
+  }
+}

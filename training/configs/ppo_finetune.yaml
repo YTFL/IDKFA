@@ -10,7 +10,7 @@ train:
   eval_maps_per_tier: 3
 
 env:
-  num_envs: 24
+  num_envs: 32
   use_subproc: true
   initial_stage: 5
   episode_ticks: 2100
@@ -26,16 +26,16 @@ env:
 ppo:
   rollout_len: 128
   seq_len: 32
-  minibatch_seqs: 48
+  minibatch_seqs: 64
   use_bf16: true
   use_action_mask: true
   critic_warmup_updates: 20
-  bc_kl_coef: 0.02
+  bc_kl_coef: 0.05
   ppo_epochs: 3
   gamma: 0.995
   gamma_int: 0.99
   gae_lambda: 0.95
-  clip_eps: 0.15
+  clip_eps: 0.10
   value_clip_eps: 0.2
   vf_ext_coef: 0.5
   vf_int_coef: 0.25
@@ -44,12 +44,12 @@ ppo:
   intrinsic_coef_start: 0.10
   intrinsic_coef_end: 0.02
   aux_coef: 0.1
-  lr: 0.0001
-  lr_end: 0.00002
+  lr: 0.00004
+  lr_end: 0.00001
   max_grad_norm: 0.5
   target_kl: 0.025
-  entity_dropout_prob: 0.05
-  obs_noise_std: 0.01
+  entity_dropout_prob: 0.0
+  obs_noise_std: 0.0
 
 rnd:
   emb_dim: 128
