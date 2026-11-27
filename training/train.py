@@ -231,6 +231,7 @@ def train(
         dataset_mix_prob=float(env_cfg.get("dataset_mix_prob", 0.25)),
         map_reuse_episodes=int(env_cfg.get("map_reuse_episodes", 3)),
         seed=seed,
+        reward_overrides=dict(config.get("reward", {})) or None,
     )
 
     vec_env = SubprocVecEnv(num_envs, worker_cfg) if use_subproc else DummyVecEnv(num_envs, worker_cfg)

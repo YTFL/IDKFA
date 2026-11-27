@@ -60,6 +60,7 @@ class WorkerConfig:
     map_reuse_episodes: int = 3
     seed: int = 42
     cache_root: str | None = None
+    reward_overrides: dict[str, Any] | None = None
 
 
 def _compute_objective_coords(
@@ -190,6 +191,10 @@ class _SingleDoomWorker:
                 reward_weights=self.curriculum.reward_weights,
                 config=st_cfg,
             )
+            if self.cfg.reward_overrides:
+                for k, v in self.cfg.reward_overrides.items():
+                    if hasattr(self.env.reward_shaper.config, k):
+                        setattr(self.env.reward_shaper.config, k, type(getattr(self.env.reward_shaper.config, k))(v))
         raw_obs, _ = self.env.reset(seed=ep_seed)
 
         self.preprocessor.reset()

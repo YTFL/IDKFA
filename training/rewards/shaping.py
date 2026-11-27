@@ -93,6 +93,7 @@ class RewardConfig:
     max_cell_reward_per_episode: float = 5.0
     kill_reward: float = 0.5
     damage_penalty_per_hp: float = -0.005
+    heal_reward_per_hp: float = 0.0
     death_penalty: float = -3.0
     step_penalty: float = -0.001
     stuck_penalty: float = -0.05
@@ -224,6 +225,9 @@ class ExtrinsicRewardShaper:
         if curr_health < self.last_health:
             damage = self.last_health - curr_health
             breakdown.damage = damage * self.config.damage_penalty_per_hp
+        elif curr_health > self.last_health and self.config.heal_reward_per_hp > 0.0:
+            healed = curr_health - self.last_health
+            breakdown.damage = healed * self.config.heal_reward_per_hp
         self.last_health = curr_health
 
         # 3. Keys: array of 6 flags or dict
