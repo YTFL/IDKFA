@@ -1,16 +1,16 @@
-# Fast under-20-minute survival & navigation PPO fine-tuning on local 12-core CPU + RTX 4050 CUDA
+# Fast under-10-minute survival & navigation PPO fine-tuning on 16-thread CPU + RTX 5060 (8 GB)
 
 train:
   run_name: emlrp_survival_ft
   device: cuda
   seed: 42
-  total_steps: 92160
+  total_steps: 98304
   eval_interval_updates: 12
   save_interval_updates: 12
   eval_maps_per_tier: 2
 
 env:
-  num_envs: 20
+  num_envs: 32
   use_subproc: true
   initial_stage: 5
   episode_ticks: 2100
@@ -26,7 +26,7 @@ env:
 ppo:
   rollout_len: 128
   seq_len: 32
-  minibatch_seqs: 40
+  minibatch_seqs: 64
   use_bf16: true
   use_action_mask: true
   critic_warmup_updates: 5
