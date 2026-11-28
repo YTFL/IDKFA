@@ -14,6 +14,12 @@ A `2.5M`-parameter neural agent (**EgoMap-Landmark Recurrent Policy — EMLRP**)
 - **GRU + Latent Hierarchical Mode Head** ([emlrp.py](submission/models/emlrp.py)): `256`-dim GRU fused with a learned `5`-mode controller, `MultiBinary(9)` actor head, dual extrinsic/intrinsic critics, and training-only auxiliary heads.
 - **Inference Agent** ([agent.py](submission/agent.py)): Runs single-step inference under `torch.inference_mode()` (`8.09 ms/step` over 1,050 decisions on 1 CPU thread, compact `7.32 MB` weights via Git LFS, full sanitization and edge-safe exception recovery).
 
+## Tech & Rewards
+
+- **Algorithm & Framework:** Custom PyTorch **Recurrent PPO** ([ppo_recurrent.py](training/algo/ppo_recurrent.py)) with truncated BPTT (`seq_len: 32`), dual extrinsic/intrinsic GAE critics, and `bf16` AMP running on **ViZDoom 1.3.3** (`freedoom2.wad`)—not Stable-Baselines3.
+- **Parameters vs. Timesteps:** `2.5M` refers to the **actual neural network size** (`~2.5M` trainable parameters in `EMLRPPolicy`, `7.32 MB` exported weights), while training runs for `2M` (`2,000,000`) environment steps.
+- **Rewards & Penalties:** Positive shaping for reaching the exit (`+10.0` + health/time bonus), keycards (`+2.0`), unlocking locked doors (`+2.0`), opening doors (`+0.5`), kills (`+0.5`), new-area exploration (`+0.02`), and potential-based navigation; penalties for death (`-3.0`), damage (`-0.005/HP`), getting stuck (`-0.05`), and step time (`-0.001`), plus RND + episodic novelty curiosity.
+
 ---
 
 ## Setup

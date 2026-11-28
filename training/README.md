@@ -1,6 +1,6 @@
 # Training Pipeline (`training/`)
 
-Modular training, curriculum, evaluation, and diagnostic pipeline for **Nordlicht (EMLRP)**.
+Modular training, curriculum, evaluation, and diagnostic pipeline for **IDKFA (EMLRP)**.
 
 ## Structure
 

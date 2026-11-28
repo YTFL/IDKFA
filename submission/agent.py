@@ -49,7 +49,7 @@ def _is_lfs_pointer(path: Path) -> bool:
 
 
 def _resolve_weights_path() -> Path:
-    env_override = os.environ.get("NORDLICHT_WEIGHTS_PATH")
+    env_override = os.environ.get("IDKFA_WEIGHTS_PATH")
     if env_override:
         p = Path(env_override)
         if not p.is_absolute():
@@ -58,7 +58,7 @@ def _resolve_weights_path() -> Path:
             if _is_lfs_pointer(p):
                 raise RuntimeError(f"Weights file {p} is an unfetched Git LFS pointer; run `git lfs pull`.")
             return p
-        raise FileNotFoundError(f"NORDLICHT_WEIGHTS_PATH not found: {p}")
+        raise FileNotFoundError(f"IDKFA_WEIGHTS_PATH not found: {p}")
 
     for name in _WEIGHT_CANDIDATES:
         candidate = WEIGHTS_DIR / name
@@ -147,7 +147,7 @@ class DoomAgent:
         self.policy.load_state_dict(ckpt["model_state_dict"])
         self.include_depth = model_cfg.depth_feat_dim > 0 and self.preprocessor.use_depth
 
-        env_temp = os.environ.get("NORDLICHT_TEMPERATURE")
+        env_temp = os.environ.get("IDKFA_TEMPERATURE")
         self.temperature = float(env_temp) if env_temp is not None else float(ckpt.get("inference_temperature", 0.0))
 
         self.exec_device = self._select_fastest_device(self.requested_device)

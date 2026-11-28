@@ -1,4 +1,4 @@
-"""Neural policy architectures for Nordlicht."""
+"""Neural policy architectures for IDKFA."""
 
 from .adapter import processed_sequence_to_tensors, processed_to_tensors, single_obs_to_tensors
 from .config import EMLRPConfig, EMLRPState, init_emlrp_state

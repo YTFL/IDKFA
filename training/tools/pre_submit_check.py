@@ -96,7 +96,7 @@ def check_lfs_and_size(repo: Path = ROOT) -> dict[str, Any]:
 
 def check_clean_copy_rollout(repo: Path = ROOT, episode_ticks: int = 120) -> dict[str, Any]:
     """Copy `submission/` into an isolated temp directory and verify deterministic DoomAgent execution."""
-    tmp = Path(tempfile.mkdtemp(prefix="nordlicht-clean-"))
+    tmp = Path(tempfile.mkdtemp(prefix="idkfa-clean-"))
     try:
         shutil.copytree(repo / "submission", tmp / "submission", ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
         agent_path = tmp / "submission" / "agent.py"

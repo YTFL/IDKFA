@@ -1,4 +1,4 @@
-"""Custom RL algorithms for Nordlicht."""
+"""Custom RL algorithms for IDKFA."""
 
 from .ppo_recurrent import (
     RecurrentPPOConfig,

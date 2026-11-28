@@ -130,10 +130,10 @@ def main() -> None:
     if not args.skip_generalization:
         from doom_env import spaces as S
 
-        prev_w = os.environ.get("NORDLICHT_WEIGHTS_PATH")
-        prev_t = os.environ.get("NORDLICHT_TEMPERATURE")
-        os.environ["NORDLICHT_WEIGHTS_PATH"] = str(Path(args.checkpoint).resolve())
-        os.environ["NORDLICHT_TEMPERATURE"] = str(args.temperature)
+        prev_w = os.environ.get("IDKFA_WEIGHTS_PATH")
+        prev_t = os.environ.get("IDKFA_TEMPERATURE")
+        os.environ["IDKFA_WEIGHTS_PATH"] = str(Path(args.checkpoint).resolve())
+        os.environ["IDKFA_TEMPERATURE"] = str(args.temperature)
         try:
             agent = DoomAgent(S.observation_space(), S.action_space(), dev)
             specs = DEFAULT_GENERALIZATION_MAPS[:2] if args.quick else DEFAULT_GENERALIZATION_MAPS
@@ -152,13 +152,13 @@ def main() -> None:
                 )
         finally:
             if prev_w is None:
-                os.environ.pop("NORDLICHT_WEIGHTS_PATH", None)
+                os.environ.pop("IDKFA_WEIGHTS_PATH", None)
             else:
-                os.environ["NORDLICHT_WEIGHTS_PATH"] = prev_w
+                os.environ["IDKFA_WEIGHTS_PATH"] = prev_w
             if prev_t is None:
-                os.environ.pop("NORDLICHT_TEMPERATURE", None)
+                os.environ.pop("IDKFA_TEMPERATURE", None)
             else:
-                os.environ["NORDLICHT_TEMPERATURE"] = prev_t
+                os.environ["IDKFA_TEMPERATURE"] = prev_t
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)

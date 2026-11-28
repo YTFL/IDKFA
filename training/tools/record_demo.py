@@ -106,7 +106,7 @@ def _write_dashboard_html(frames_b64: list[dict], out_path: Path, map_label: str
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     payload = json.dumps(frames_b64)
-    title = html.escape(f"Nordlicht Composite Telemetry Replay — {map_label}")
+    title = html.escape(f"IDKFA Composite Telemetry Replay — {map_label}")
     doc = f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8" /><title>{title}</title>
 <style>
@@ -201,7 +201,7 @@ def run_demo(
     summary_path = log_path.with_suffix(".summary.json")
     print(f"Logging telemetry -> {log_path} (init={init_ms:.1f} ms)")
 
-    dashboard = DoomDashboard(title=f"Nordlicht DOOM Agent - {Path(resolved_wad).name} [{map_name}]", headless=not window)
+    dashboard = DoomDashboard(title=f"IDKFA DOOM Agent - {Path(resolved_wad).name} [{map_name}]", headless=not window)
     if window:
         print(f"Pygame window active (driver={pygame.display.get_driver()})")
 
@@ -484,7 +484,7 @@ def run_demo(
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Nordlicht DOOM Agent Live Dashboard & Recorder")
+    parser = argparse.ArgumentParser(description="IDKFA DOOM Agent Live Dashboard & Recorder")
     parser.add_argument("--map", type=str, default="freedoom2", help="Map WAD path or 'freedoom2'")
     parser.add_argument("--map-name", type=str, default="MAP01", help="Map lump name inside WAD (e.g. MAP01, MAP02)")
     parser.add_argument("--ticks", type=int, default=4200, help="Episode ticks (35 ticks = 1s, track max = 4200)")

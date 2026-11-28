@@ -224,7 +224,7 @@ def write_replay_html(demo: dict[str, Any], out_path: str | Path) -> Path:
     target = Path(out_path)
     target.parent.mkdir(parents=True, exist_ok=True)
     payload = json.dumps(demo)
-    title = html.escape(f"Nordlicht EMLRP Demo — {demo['map']}")
+    title = html.escape(f"IDKFA EMLRP Demo — {demo['map']}")
     doc = f"""<!doctype html>
 <html lang="en">
 <head>

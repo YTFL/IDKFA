@@ -1,4 +1,4 @@
-"""Generate the 2-page Nordlicht (EMLRP) project brief (`docs/brief.pdf`) from diagnostic JSONs.
+"""Generate the 2-page IDKFA (EMLRP) project brief (`docs/brief.pdf`) from diagnostic JSONs.
 
 Uses pure HTML/CSS + inline SVG diagrams compiled via headless Edge/Chrome (zero extra pip deps).
 
@@ -143,7 +143,7 @@ def build_html(eval_data: dict[str, Any] | None, ablation_data: dict[str, Any] |
 
 <div class="page">
   <div class="header">
-    <h1>Nordlicht: Zero-Shot DOOM via EMLRP</h1>
+    <h1>IDKFA: Zero-Shot DOOM via EMLRP</h1>
     <span class="sub">Track 1: &ldquo;Can It Play DOOM?&rdquo; &middot; DevForge 2026</span>
   </div>
 
@@ -245,7 +245,7 @@ def render_pdf(html_text: str, output_path: str | Path) -> dict[str, Any]:
     out = Path(output_path)
     out.parent.mkdir(parents=True, exist_ok=True)
     browser = find_headless_browser()
-    tmp_dir = Path(tempfile.mkdtemp(prefix="nordlicht_brief_"))
+    tmp_dir = Path(tempfile.mkdtemp(prefix="idkfa_brief_"))
     try:
         html_file = tmp_dir / "brief.html"
         pdf_tmp = tmp_dir / "brief.pdf"
@@ -276,7 +276,7 @@ def render_pdf(html_text: str, output_path: str | Path) -> dict[str, Any]:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Build 2-page Nordlicht project brief PDF")
+    parser = argparse.ArgumentParser(description="Build 2-page IDKFA project brief PDF")
     parser.add_argument("--eval-json", type=str, default="runs/diagnostics/eval_report.json")
     parser.add_argument("--ablation-json", type=str, default="runs/diagnostics/ablation_report.json")
     parser.add_argument("--output", type=str, default="docs/brief.pdf")

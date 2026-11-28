@@ -328,7 +328,7 @@ def evaluate_on_manifest(
 
     total_episodes = len(tasks)
     if workers is None:
-        workers = int(os.environ.get("NORDLICHT_EVAL_WORKERS", str(os.cpu_count() or 1)))
+        workers = int(os.environ.get("IDKFA_EVAL_WORKERS", str(os.cpu_count() or 1)))
     n_workers = max(1, min(int(workers), total_episodes)) if total_episodes > 0 else 1
 
     ordered_results: list[tuple[str, dict[str, Any]] | None] = [None] * total_episodes

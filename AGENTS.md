@@ -1,4 +1,4 @@
-# AGENTS.md — Nordlicht (DevForge DOOM)
+# AGENTS.md — IDKFA (DevForge DOOM)
 
 Mandatory project rules, contract, and evaluation constraints.
 

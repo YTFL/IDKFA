@@ -88,7 +88,7 @@ def test_export_weights_roundtrip_and_size(tmp_path: Path) -> None:
 
 def test_agent_contract_reset_and_reproducibility(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     weights_pt = _make_temp_weights(tmp_path, temperature=0.0)
-    monkeypatch.setenv("NORDLICHT_WEIGHTS_PATH", str(weights_pt))
+    monkeypatch.setenv("IDKFA_WEIGHTS_PATH", str(weights_pt))
 
     obs_space = S.observation_space()
     act_space = S.action_space()
@@ -116,7 +116,7 @@ def test_agent_contract_reset_and_reproducibility(monkeypatch: pytest.MonkeyPatc
 
 def test_agent_temperature_reproducibility(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     weights_pt = _make_temp_weights(tmp_path, temperature=0.7)
-    monkeypatch.setenv("NORDLICHT_WEIGHTS_PATH", str(weights_pt))
+    monkeypatch.setenv("IDKFA_WEIGHTS_PATH", str(weights_pt))
 
     agent = DoomAgent(S.observation_space(), S.action_space(), "cpu")
     seq = [_make_obs(seed=200 + i) for i in range(10)]
@@ -132,7 +132,7 @@ def test_agent_sanitization_edge_cases_and_fallback(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     weights_pt = _make_temp_weights(tmp_path, temperature=0.0)
-    monkeypatch.setenv("NORDLICHT_WEIGHTS_PATH", str(weights_pt))
+    monkeypatch.setenv("IDKFA_WEIGHTS_PATH", str(weights_pt))
 
     agent = DoomAgent(S.observation_space(), S.action_space(), "cpu")
     agent.reset()
@@ -189,7 +189,7 @@ def test_agent_sanitization_edge_cases_and_fallback(
 
 def test_agent_long_horizon_latency_1_thread(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     weights_pt = _make_temp_weights(tmp_path, temperature=0.0)
-    monkeypatch.setenv("NORDLICHT_WEIGHTS_PATH", str(weights_pt))
+    monkeypatch.setenv("IDKFA_WEIGHTS_PATH", str(weights_pt))
 
     agent = DoomAgent(S.observation_space(), S.action_space(), "cpu")
     assert torch.get_num_threads() == 1

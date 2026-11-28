@@ -1,4 +1,4 @@
-# Nordlicht Finalization & Verification Guide (RTX 5060 Machine)
+# IDKFA Finalization & Verification Guide (RTX 5060 Machine)
 
 Both `feat/phase-5-training-pipeline` and `feat/phase-6-8-submission` are merged together, including:
 - Trained `2,001,920`-step checkpoint (`submission/weights/emlrp_latest.pt`, Update `962`, Stage `1`) and best validation checkpoint (`submission/weights/emlrp_best.pt`, Update `200`, `best_val = 10.5325`), tracked via Git LFS.
@@ -109,11 +109,11 @@ git add submission/weights/agent.pt docs/brief.pdf
 git commit -m "chore(submission): finalize trained 5060 weights and 2-page brief"
 
 git checkout main
-git merge --no-ff feat/phase-5-training-pipeline -m "Merge final Nordlicht EMLRP submission"
+git merge --no-ff feat/phase-5-training-pipeline -m "Merge final IDKFA EMLRP submission"
 python validate.py --docker   # final check on main
 git lfs ls-files
 git lfs push --all origin
 git push origin main
-git tag -a v1.0-submission -m "Nordlicht DevForge DOOM final submission"
+git tag -a v1.0-submission -m "IDKFA DevForge DOOM final submission"
 git push origin v1.0-submission
 ```

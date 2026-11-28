@@ -106,7 +106,7 @@ class _SingleDoomWorker:
         cache_base = (
             Path(cfg.cache_root)
             if cfg.cache_root is not None
-            else Path(tempfile.gettempdir()) / "nordlicht_vec_maps"
+            else Path(tempfile.gettempdir()) / "idkfa_vec_maps"
         )
         self.worker_cache = cache_base / f"worker_{worker_id}"
         self.worker_cache.mkdir(parents=True, exist_ok=True)
@@ -351,7 +351,7 @@ class DummyVecEnv:
         self.num_envs = num_envs
         self._owned_cache_root: str | None = None
         if cfg.cache_root is None:
-            self._owned_cache_root = tempfile.mkdtemp(prefix="nordlicht_vec_")
+            self._owned_cache_root = tempfile.mkdtemp(prefix="idkfa_vec_")
             cfg = dataclasses.replace(cfg, cache_root=self._owned_cache_root)
         self.workers = [_SingleDoomWorker(i, cfg) for i in range(num_envs)]
         self._pending_slices: dict[tuple[int, int], list[Any]] = {}
@@ -389,7 +389,7 @@ class SubprocVecEnv:
         self.num_envs = num_envs
         self._owned_cache_root: str | None = None
         if cfg.cache_root is None:
-            self._owned_cache_root = tempfile.mkdtemp(prefix="nordlicht_vec_")
+            self._owned_cache_root = tempfile.mkdtemp(prefix="idkfa_vec_")
             cfg = dataclasses.replace(cfg, cache_root=self._owned_cache_root)
         ctx = mp.get_context("spawn")
         self._remotes: list[Any] = []

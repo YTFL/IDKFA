@@ -51,10 +51,11 @@ RAY_COLORS = {
 
 
 class DoomDashboard:
-    def __init__(self, title: str = "DOOM Neural Agent Dashboard", headless: bool = True):
+    def __init__(self, title: str = "DOOM Neural Agent Dashboard", headless: bool = True, fps: int = 30):
         self.width = CANVAS_WIDTH
         self.height = CANVAS_HEIGHT
         self.headless = headless
+        self.fps = fps
 
         self._prev_sdl_driver = os.environ.get("SDL_VIDEODRIVER")
         if self.headless:
@@ -64,6 +65,7 @@ class DoomDashboard:
 
         pygame.init()
         pygame.font.init()
+        self.clock = pygame.time.Clock()
 
         if self.headless:
             self.surface = pygame.Surface((self.width, self.height))
@@ -171,6 +173,8 @@ class DoomDashboard:
         if not self.headless:
             pygame.display.flip()
             pygame.event.pump()
+            if self.fps > 0:
+                self.clock.tick(self.fps)
 
         # Convert surface to (H, W, 3) numpy array
         view = pygame.surfarray.array3d(self.surface)
@@ -467,6 +471,8 @@ class DoomDashboard:
         if not self.headless:
             pygame.display.flip()
             pygame.event.pump()
+            if self.fps > 0:
+                self.clock.tick(self.fps)
 
         arr = pygame.surfarray.array3d(self.surface)
         return np.transpose(arr, (1, 0, 2)).copy()
