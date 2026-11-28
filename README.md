@@ -17,7 +17,7 @@ A `1.9M`-parameter neural agent (**EgoMap-Landmark Recurrent Policy — EMLRP**)
 ## Tech & Rewards
 
 - **Algorithm & Framework:** Custom PyTorch **Recurrent PPO** ([ppo_recurrent.py](training/algo/ppo_recurrent.py)) with truncated BPTT (`seq_len: 32`), dual extrinsic/intrinsic GAE critics, and `bf16` AMP running on **ViZDoom 1.3.3** (`freedoom2.wad`)—not Stable-Baselines3.
-- **Parameters vs. Timesteps:** `1.9M` (`1,904,053`) refers to the **actual neural network size** (trainable parameters in `EMLRPPolicy`, `7.32 MB` exported weights), while training runs for `2M` (`2,000,000`) environment steps.
+- **Parameters vs. Timesteps:** `1.9M` (`1,904,053`) refers to the **actual neural network size** (trainable parameters in `EMLRPPolicy`, `7.32 MB` exported weights), while training runs for `2.5M` (`2,500,000`) environment steps.
 - **Rewards & Penalties:** Positive shaping for reaching the exit (`+10.0` + health/time bonus), keycards (`+2.0`), unlocking locked doors (`+2.0`), opening doors (`+0.5`), kills (`+0.5`), new-area exploration (`+0.02`), and potential-based navigation; penalties for death (`-3.0`), damage (`-0.005/HP`), getting stuck (`-0.05`), and step time (`-0.001`), plus RND + episodic novelty curiosity.
 
 ---
