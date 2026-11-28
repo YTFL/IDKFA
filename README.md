@@ -1,7 +1,12 @@
 # IDKFA — Zero-Shot DOOM Agent (EMLRP)
 
-Submission for **Yugaantar 2026 · DevForge Track 1: "Can It Play DOOM?"**.
 A `1.9M`-parameter neural agent (**EgoMap-Landmark Recurrent Policy — EMLRP**) built to play unseen `freedoom2.wad` levels zero-shot across combat, multi-room exploration, keycard puzzles, and full gauntlets using strictly ego-centric observations (`rays`, `depth`, `vitals`, `visible_entities`) and trained neural parameters.
+
+---
+
+## Showcase
+
+<!-- Upload showcase video here via the GitHub web editor -->
 
 ---
 
