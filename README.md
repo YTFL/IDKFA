@@ -8,6 +8,10 @@ A `1.9M`-parameter neural agent (**EgoMap-Landmark Recurrent Policy — EMLRP**)
 
 <!-- Upload showcase video here via the GitHub web editor -->
 
+https://github.com/user-attachments/assets/0d6d33ae-8f3a-4637-a89e-f2666bf67a54
+
+
+
 ---
 
 ## Architecture Highlights (`submission/`)
